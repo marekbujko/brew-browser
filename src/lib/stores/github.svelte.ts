@@ -241,9 +241,16 @@ class GithubStore {
       }
 
       if (result.kind === "approved") {
-        this.signinState = { kind: "approved" };
-        // Refresh status so the Settings panel shows the new username.
+        // IMPORTANT: refresh status BEFORE flipping signinState to
+        // "approved". The DeviceFlowModal's $effect fires the success
+        // toast the moment signinState becomes "approved" and reads
+        // `status.username` for the toast body — if status hasn't been
+        // hydrated yet, the toast falls back to "Signed in to GitHub"
+        // (and the Settings panel briefly shows "@github user" before
+        // catching up). Loading status first guarantees the toast and
+        // the panel both see the real username.
         await this.loadStatus();
+        this.signinState = { kind: "approved" };
         return;
       }
       if (result.kind === "denied") {

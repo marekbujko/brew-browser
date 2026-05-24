@@ -24,7 +24,7 @@
    * which aborts the poll loop and flips state back to idle.
    */
 
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import X from "@lucide/svelte/icons/x";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Loader from "@lucide/svelte/icons/loader-2";
@@ -71,11 +71,18 @@
   });
 
   /** Auto-dismiss the terminal states after a beat so the user sees
-      the outcome but the modal doesn't linger. */
+      the outcome but the modal doesn't linger.
+
+      `github.status?.username` is wrapped in `untrack` so this effect's
+      ONLY reactive dependency is `signinState`. Without it, every
+      post-sign-in status hydration (or any later status refresh while
+      still in "approved" state) would re-run the effect and queue
+      another toast — the symptom was a stack of "Signed in to GitHub"
+      toasts up the right edge of the window. */
   $effect(() => {
     const s = github.signinState;
     if (s.kind === "approved") {
-      const name = github.status?.username;
+      const name = untrack(() => github.status?.username);
       toast.success(name ? `Signed in as @${name}` : "Signed in to GitHub");
       const t = setTimeout(() => github.cancelSignin(), 1500);
       return () => clearTimeout(t);

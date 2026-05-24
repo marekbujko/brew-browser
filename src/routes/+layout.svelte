@@ -7,6 +7,7 @@
   import { activity } from "$lib/stores/activity.svelte";
   import { services } from "$lib/stores/services.svelte";
   import { settings } from "$lib/stores/settings.svelte";
+  import { github } from "$lib/stores/github.svelte";
 
   let { children } = $props();
 
@@ -27,6 +28,13 @@
     // Prime the services list so the sidebar's "Services" badge can show a
     // count from first paint; the Services tab refreshes again on mount.
     void services.load();
+    // Hydrate GitHub sign-in status on app start so the intercept guard
+    // in PackageDetail (requireGithubSignIn) sees the real signed-in
+    // state from the first paint. Without this, the first click on
+    // Star/Watch/File-issue would bounce the user to Settings → GitHub
+    // even when they're already authenticated, because the status only
+    // hydrated when Settings → GitHub mounted.
+    void github.loadStatus();
 
     // Native macOS menu bridge — Rust emits `menu:about` / `menu:settings`
     // when the user picks those items from the App menu in the system menu
