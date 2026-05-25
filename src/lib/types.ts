@@ -478,6 +478,11 @@ export interface Settings {
       (Phase 13), donut chart, category pills, friendly names,
       summaries, use cases, similar packages, tags. Default true. */
   aiFeaturesEnabled: boolean;
+  /** Phase 15 — when true, the backend's auto-check scheduler wakes
+      every 24h and calls `update_check_now`. Default off; the user
+      opts in via Settings → Network → Updates. Suppressed (no fetch)
+      while Offline Mode is on, regardless of this flag. */
+  updateAutoCheck: boolean;
 }
 
 /** Defaults matching the Rust `Settings::default()`. Used when seeding
@@ -495,6 +500,9 @@ export const SETTINGS_DEFAULTS: Settings = {
   // Phase 13 — AI-enriched rendering. ON by default so users get the
   // friendly names, summaries, and categories out of the box.
   aiFeaturesEnabled: true,
+  // Phase 15 — auto-check for new brew-browser releases. Off by
+  // default per the "zero outbound unless user consented" posture.
+  updateAutoCheck: false,
 };
 
 // =========================================================
@@ -582,6 +590,43 @@ export interface CreatedIssue {
   number: number;
   htmlUrl: string;
 }
+
+// =========================================================
+// 2.12 Updater (Phase 15)
+// =========================================================
+
+/**
+ * A newer brew-browser version surfaced by the manifest at
+ * `brew-browser.zerologic.com/updater.json`. Backend resolves the
+ * manifest, performs the version comparison, and (only when a newer
+ * release exists) returns this shape inside an `available` outcome.
+ *
+ * `sha256` is the lowercase hex digest of the .dmg. The user can
+ * verify out-of-band against the published manifest; the backend
+ * also re-checks this before invoking minisign signature verification.
+ */
+export interface UpdateInfo {
+  version: string;
+  notesUrl: string;
+  sha256: string;
+}
+
+/**
+ * Tagged union returned by `update_check_now`. The frontend store
+ * narrows on `kind` to drive the title-bar indicator + the Settings
+ * card.
+ *
+ *   - `upToDate` — manifest version ≤ running version, nothing to show.
+ *   - `available` — newer version exists (and isn't on the user's
+ *     skip-list); UI surfaces the indicator + the install action.
+ *   - `blocked` — Offline Mode is on; the typed `BrewError` variant
+ *     is the authoritative signal (the store maps it into this kind
+ *     for UI ergonomics).
+ */
+export type UpdateCheckOutcome =
+  | { kind: "upToDate" }
+  | { kind: "available"; info: UpdateInfo }
+  | { kind: "blocked" };
 
 // =========================================================
 // 3.3 Error model

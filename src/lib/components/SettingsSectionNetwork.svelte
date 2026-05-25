@@ -26,10 +26,21 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 
   import { settings } from "$lib/stores/settings.svelte";
+  import SettingsSectionUpdates from "$lib/components/SettingsSectionUpdates.svelte";
   import type {
     CaskIconMode,
     CatalogAutoRefresh,
   } from "$lib/types";
+
+  /** Tooltip + accessible-description copy for the Offline Mode toggle
+      (Phase 15 plan §11 item 13). Centralised in one constant so the
+      `title` attribute and the on-screen hint stay in sync. */
+  const OFFLINE_MODE_DESCRIPTION =
+    "Blocks every outbound network call: catalog refresh, Trending fetch, " +
+    "GitHub stats, GitHub sign-in, cask icon homepage probes, update checks. " +
+    "All UI that depends on the network shows a 'disabled by Offline Mode' " +
+    "notice. brew itself still runs normally — its network access is the " +
+    "user's call at the terminal.";
 
   /** Inclusive bounds — kept in sync with `Settings::CATALOG_STALE_DAYS_*`
       in src-tauri/src/commands/settings.rs. */
@@ -113,7 +124,7 @@
       },
       {
         label: "brew",
-        desc: "Install/uninstall/upgrade — brew itself fetches bottles. Not gated by Paranoid Mode (you initiated the action).",
+        desc: "Install/uninstall/upgrade — brew itself fetches bottles. Not gated by Offline Mode (you initiated the action).",
         allowed: true,
       },
       {
@@ -154,25 +165,27 @@
       </button>
     </div>
   {:else if settings.data}
-    <!-- Master switch -->
+    <!-- Master switch — Phase 15 renames user-visible "Paranoid Mode"
+         to "Offline Mode". The internal field name (`paranoidMode` on
+         the Settings DTO, `paranoid_mode` in settings.json) stays
+         unchanged to avoid migration churn — only the UX moves. -->
     <div class="field">
-      <label class="toggle">
+      <label class="toggle" title={OFFLINE_MODE_DESCRIPTION}>
         <input
           type="checkbox"
           checked={settings.data.paranoidMode}
           onchange={toggleParanoid}
           disabled={settings.loading}
+          aria-describedby="offline-mode-hint"
         />
         <span class="toggle-track" aria-hidden="true"></span>
-        <span class="toggle-label">Paranoid Mode</span>
+        <span class="toggle-label">Offline Mode</span>
       </label>
-      <p class="hint">Block every outbound network call. Each gated
-        command returns a typed error so the UI can prompt you to
-        re-enable.</p>
+      <p class="hint" id="offline-mode-hint">{OFFLINE_MODE_DESCRIPTION}</p>
       {#if settings.data.paranoidMode}
         <div class="callout warn" role="status">
           <AlertTriangle size={16} />
-          <span>Paranoid mode is on — Trending, Catalog refresh, and
+          <span>Offline Mode is on — Trending, Catalog refresh, and
             Cask icon probes are blocked.</span>
         </div>
       {/if}
@@ -294,6 +307,9 @@
     {#if settings.error}
       <p class="callout-error">{settings.error}</p>
     {/if}
+
+    <!-- Phase 15: Updates subsection lives at the bottom of Network. -->
+    <SettingsSectionUpdates />
   {/if}
 </div>
 

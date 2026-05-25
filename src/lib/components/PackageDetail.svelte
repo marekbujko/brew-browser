@@ -416,8 +416,19 @@
       starredState = "unknown";
       return;
     }
-    starredState = github.starredCache.get(hp) ?? "unknown";
-    if (starredState === "unknown") {
+    // CRITICAL: refetch only when the cache has NO entry for this
+    // homepage (true cache miss). Earlier this test was `starredState
+    // === "unknown"` which couldn't distinguish "haven't fetched yet"
+    // from "fetched and failed" — failed fetches wrote "unknown" to
+    // the cache, which retriggered this effect, which refetched, which
+    // failed, which wrote "unknown" again. Infinite IPC storm + Svelte
+    // scheduler thrash that surfaced as a duplicate-toast cascade in
+    // the sign-in flow (issue #1). The `isStarred` catch now writes
+    // "error" (distinct from "unknown"), and this gate now checks
+    // `cached === undefined` so failed attempts don't keep retrying.
+    const cached = github.starredCache.get(hp);
+    starredState = cached ?? "unknown";
+    if (cached === undefined) {
       void github.isStarred(hp).then((result) => {
         // Only update if we're still on the same package.
         if (pkg?.homepage === hp) {
@@ -456,6 +467,42 @@
       fire two opposite IPCs. */
   let starToggling = $state(false);
 
+  /** Handle a failed authed-action IPC with friendly UX.
+   *
+   *  - `ScopeRequired { scope }` → actionable toast: "Watch needs the
+   *    'notifications' permission. [Re-authorize]". Clicking
+   *    Re-authorize calls `github.signIn()` which re-runs Device Flow
+   *    requesting the FULL scope set; GitHub's consent screen shows
+   *    only the missing scopes (existing grants persist), the user
+   *    clicks Authorize once, the new token overwrites the old one
+   *    in Keychain transparently. NO sign-out needed.
+   *  - Any other BrewError → regular error toast via `brewErrorMessage`.
+   *  - Unknown error → toast the stringified value.
+   */
+  function showActionFailureToast(
+    actionLabel: string,
+    e: unknown,
+  ): void {
+    if (isBrewError(e) && e.code === "scope_required") {
+      const scope = e.scope;
+      toast.error(
+        `Couldn't ${actionLabel}`,
+        `Needs the "${scope}" GitHub permission. Click to grant it without signing out.`,
+        {
+          label: "Re-authorize",
+          onClick: () => {
+            void github.signIn();
+          },
+        },
+      );
+      return;
+    }
+    toast.error(
+      `Couldn't ${actionLabel}`,
+      isBrewError(e) ? brewErrorMessage(e) : String(e),
+    );
+  }
+
   async function onToggleStar() {
     if (!pkg?.homepage || starToggling) return;
     if (!(await requireGithubSignIn("star this package"))) return;
@@ -467,7 +514,7 @@
       else if (target === false) toast.success(`Unstarred ${pkg.name}`);
       starredState = github.starredCache.get(hp) ?? "unknown";
     } catch (e) {
-      toast.error("Couldn't update star", isBrewError(e) ? brewErrorMessage(e) : String(e));
+      showActionFailureToast("update star", e);
     } finally {
       starToggling = false;
     }
@@ -490,7 +537,7 @@
       watching = want;
       toast.success(want ? `Watching ${pkg.name}` : `Stopped watching ${pkg.name}`);
     } catch (e) {
-      toast.error("Couldn't update watch", isBrewError(e) ? brewErrorMessage(e) : String(e));
+      showActionFailureToast("update watch", e);
     } finally {
       watchPending = false;
     }
@@ -860,7 +907,7 @@
             {:else if githubOutcome.kind === "blocked"}
               <div class="gh-error">
                 <AlertCircle size={14} />
-                <span>Blocked by Paranoid Mode. Disable in Settings → Network.</span>
+                <span>Blocked by Offline Mode. Disable in Settings → Network.</span>
               </div>
             {:else if githubOutcome.kind === "error"}
               <div class="gh-error">

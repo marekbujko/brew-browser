@@ -47,6 +47,7 @@ import type {
   Settings,
   TrendingReport,
   TrendingWindow,
+  UpdateCheckOutcome,
 } from "./types";
 
 // ============================================================
@@ -583,6 +584,58 @@ export function githubCreateIssue(
     body,
     labels,
   });
+}
+
+// ============================================================
+// Phase 15 — in-app updater
+// ============================================================
+
+/**
+ * Check the manifest at `brew-browser.zerologic.com/updater.json` for
+ * a newer release. Backend handles the version comparison, the
+ * skip-list consultation, and the URL allowlist on the artifact URL
+ * declared in the manifest.
+ *
+ * Throws `BrewErrorPayload` with `code === "paranoid_mode_blocked"`
+ * (feature: "update_check") when Offline Mode is on; the store maps
+ * this into `{ kind: "blocked" }` for UI ergonomics. Other typed
+ * errors (network failure, malformed manifest, signature mismatch)
+ * propagate to the caller for inline display.
+ */
+export function updateCheckNow(): Promise<UpdateCheckOutcome> {
+  return invoke<UpdateCheckOutcome>("update_check_now");
+}
+
+/**
+ * Download, verify, and install the named version. The backend
+ * cross-checks `version` against the cached "available" entry from
+ * the most recent `update_check_now` call — a stale UI request for
+ * the wrong version fast-fails with `invalid_argument` rather than
+ * downloading the wrong .dmg.
+ *
+ * Subject to the same Offline Mode gate as `update_check_now`. Long-
+ * running; the renderer should disable the install button while in
+ * flight and surface progress via the updater store's `installing`
+ * flag. (Streaming progress events, if added later, would slot in
+ * here with the same Channel-based pattern used by brew_install.)
+ */
+export function updateInstall(version: string): Promise<void> {
+  return invoke<void>("update_install", { version });
+}
+
+/**
+ * Add `version` to the skip-list so the title-bar indicator stops
+ * surfacing for this release. A future release (any version newer
+ * than the skipped one) re-triggers the indicator.
+ *
+ * The backend persists the skip-list inside `settings.json` as
+ * `skipped_update_versions` (capped at 10, oldest evicted). If the
+ * Backend Architect ends up exposing this through `settings_set`
+ * instead of a dedicated command, this wrapper is the single
+ * integration point to adjust.
+ */
+export function updateSkip(version: string): Promise<void> {
+  return invoke<void>("update_skip", { version });
 }
 
 // ============================================================

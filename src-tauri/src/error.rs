@@ -111,6 +111,41 @@ pub enum BrewError {
     /// → GitHub for a re-grant before any network attempt.
     #[error("github scope required: {scope}")]
     ScopeRequired { scope: String },
+
+    /// Phase 15 — the updater downloaded an artifact whose sha256 did
+    /// not match the value declared in the manifest. **Fail closed**:
+    /// the .dmg is deleted before this error returns. The cheap hash
+    /// check runs *before* the expensive minisign verification so a
+    /// corrupted download is rejected without wasting CPU on crypto
+    /// over bytes we already know are wrong.
+    ///
+    /// Currently only constructed by the mock backend in
+    /// `commands::updater::tests` — the production plugin path checks
+    /// minisign only (see `tauri-plugin-updater::Update::download`'s
+    /// `verify_signature` call). When we wire a separate manifest
+    /// sha256 check (defense in depth against a wedge between the
+    /// manifest fetch and the artifact fetch), this variant is what
+    /// it fails closed with.
+    #[allow(dead_code)]
+    #[error("update artifact hash mismatch: expected {expected}, got {actual}")]
+    HashMismatch { expected: String, actual: String },
+
+    /// Phase 15 — minisign verification of the downloaded artifact
+    /// failed against the embedded public key. **Fail closed**: the
+    /// .dmg is deleted before this error returns. Together with
+    /// [`Self::HashMismatch`] these are the two crypto chokepoints
+    /// from the §Phase 15 threat-model section; either one firing
+    /// aborts the install with no on-disk side effects.
+    #[error("update signature verification failed: {message}")]
+    SignatureVerificationFailed { message: String },
+
+    /// Phase 15 — the updater was asked to install a version that is
+    /// the same as, or older than, the currently-running build. This
+    /// is the explicit downgrade-attack defense (the plugin already
+    /// refuses semver-older targets; this is defense in depth so a
+    /// future plugin behaviour change cannot reopen the hole).
+    #[error("update would downgrade {current} to {target}; refusing")]
+    DowngradeRejected { current: String, target: String },
 }
 
 // ---------- From impls ----------
@@ -393,6 +428,40 @@ mod tests {
         let v: Value = serde_json::to_value(&err).unwrap();
         assert_eq!(v["code"], "scope_required");
         assert_eq!(v["scope"], "public_repo");
+    }
+
+    #[test]
+    fn hash_mismatch_serializes_with_expected_and_actual() {
+        let err = BrewError::HashMismatch {
+            expected: "deadbeef".into(),
+            actual: "feedface".into(),
+        };
+        let v: Value = serde_json::to_value(&err).unwrap();
+        assert_eq!(v["code"], "hash_mismatch");
+        assert_eq!(v["expected"], "deadbeef");
+        assert_eq!(v["actual"], "feedface");
+    }
+
+    #[test]
+    fn signature_verification_failed_serializes_with_message() {
+        let err = BrewError::SignatureVerificationFailed {
+            message: "bad signature".into(),
+        };
+        let v: Value = serde_json::to_value(&err).unwrap();
+        assert_eq!(v["code"], "signature_verification_failed");
+        assert_eq!(v["message"], "bad signature");
+    }
+
+    #[test]
+    fn downgrade_rejected_serializes_with_current_and_target() {
+        let err = BrewError::DowngradeRejected {
+            current: "0.3.0".into(),
+            target: "0.2.1".into(),
+        };
+        let v: Value = serde_json::to_value(&err).unwrap();
+        assert_eq!(v["code"], "downgrade_rejected");
+        assert_eq!(v["current"], "0.3.0");
+        assert_eq!(v["target"], "0.2.1");
     }
 
     // ---- truncate helpers ----

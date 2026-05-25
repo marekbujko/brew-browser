@@ -89,11 +89,18 @@ pub const GITHUB_OAUTH_CLIENT_ID: &str = "Ov23liJZKbvrSBuiOPkT";
 ///
 /// - `read:user` — read the signed-in user's public profile (lets us
 ///   show "Signed in as @username" in Settings).
-/// - `public_repo` — star/unstar/watch/issue on public repos.
+/// - `public_repo` — star/unstar + create issues on public repos.
 ///   Required by Phase 12f authed actions.
+/// - `notifications` — watch/unwatch access. Per GitHub's own
+///   OAuth-scopes docs ("The `notifications` scope grants watch and
+///   unwatch access to a repository"), `public_repo` alone is NOT
+///   sufficient for `PUT /repos/{owner}/{repo}/subscription` — the
+///   endpoint returns 404 (their privacy-preserving mask for "you
+///   don't have the scope") instead of 403. Added in v0.2.2 after
+///   user-reported watch action failed on a freshly-signed-in token.
 ///
 /// No write access to private repos, no admin scopes, no email read.
-pub const GITHUB_OAUTH_SCOPES: &[&str] = &["read:user", "public_repo"];
+pub const GITHUB_OAUTH_SCOPES: &[&str] = &["read:user", "public_repo", "notifications"];
 
 /// GitHub OAuth Device Flow endpoints. Both live under `github.com`
 /// (not `api.github.com`), which is why the CSP needs both origins.
@@ -535,11 +542,21 @@ pub async fn poll_device_flow_with(
 
     if let Some(token_str) = parsed.access_token {
         let token = Token::new(token_str)?;
+        // GitHub's `/login/oauth/access_token` returns the `scope` field
+        // as a **comma-separated** string (e.g. `"public_repo,read:user"`),
+        // NOT the space-separated form prescribed by OAuth 2.0 RFC 6749
+        // §3.3. An earlier version of this code used `split_whitespace()`
+        // which produced a single-element array `["public_repo,read:user"]`
+        // — the Settings panel rendered fine but every authed action
+        // rejected with `ScopeRequired` because `scopes.iter().any(|s|
+        // s == "public_repo")` was false. Split on BOTH commas and
+        // whitespace defensively so any future format flip lands cleanly.
         let scopes: Vec<String> = parsed
             .scope
             .as_deref()
             .map(|s| {
-                s.split_whitespace()
+                s.split(|c: char| c == ',' || c.is_whitespace())
+                    .filter(|x| !x.is_empty())
                     .map(|x| x.to_string())
                     .collect()
             })
@@ -731,7 +748,7 @@ mod tests {
         let dto = GithubStatusDto {
             signed_in: true,
             username: Some("octocat".into()),
-            scopes: vec!["read:user".into(), "public_repo".into()],
+            scopes: vec!["read:user".into(), "public_repo".into(), "notifications".into()],
         };
         let json = serde_json::to_string(&dto).expect("serialize");
         let known_token = "ghp_supersecrettoken1234567890ABCDEF";
@@ -755,12 +772,19 @@ mod tests {
     #[test]
     fn oauth_scopes_are_minimum() {
         // Pin the exact scope list. Adding a scope here without
-        // updating `memory-bank/scans/phase12-security-review.md` is
-        // a security review violation.
+        // updating `memory-bank/scans/2026-05-23/phase12-security-review.md`
+        // is a security review violation.
+        //
+        // v0.2.2: added `notifications` because GitHub's
+        // `PUT /repos/{owner}/{repo}/subscription` endpoint requires
+        // it specifically (their OAuth-scopes docs: "The
+        // `notifications` scope grants watch and unwatch access to a
+        // repository"). Without it, watch returns 404 — GitHub's
+        // privacy-preserving mask for "you don't have that scope".
         assert_eq!(
             GITHUB_OAUTH_SCOPES,
-            &["read:user", "public_repo"],
-            "scopes drifted from the §12e-approved minimum"
+            &["read:user", "public_repo", "notifications"],
+            "scopes drifted from the v0.2.2-approved minimum"
         );
     }
 
@@ -769,7 +793,7 @@ mod tests {
         // Reconstruct the form-body scope string the way `start_device_flow`
         // does and assert no extras snuck in.
         let scope_string = GITHUB_OAUTH_SCOPES.join(" ");
-        assert_eq!(scope_string, "read:user public_repo");
+        assert_eq!(scope_string, "read:user public_repo notifications");
         // No admin, no repo (write to private), no email, etc.
         for forbidden in &[
             "admin",

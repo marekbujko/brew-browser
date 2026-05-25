@@ -29,6 +29,7 @@ import {
   githubWatch,
 } from "$lib/api";
 import { safeOpenUrl } from "$lib/util/url";
+import { toast } from "./toast.svelte";
 import {
   brewErrorMessage,
   isBrewError,
@@ -47,7 +48,7 @@ export type RepoStatsOutcome =
   | { kind: "miss" }
   /** Anonymous 60/hr rate limit hit. UI suggests sign-in. */
   | { kind: "rateLimited"; resetAt: number }
-  /** Paranoid mode is on. */
+  /** Offline mode is on. */
   | { kind: "blocked" }
   /** Other backend error. */
   | { kind: "error"; message: string };
@@ -67,7 +68,13 @@ export type SigninState =
       expiresAt: number;
       intervalMs: number;
     }
-  | { kind: "approved" }
+  /** Carries the freshly-loaded username so the toast can render
+      personalization without an extra `github.status` read at the
+      call site. The signin-result toast is fired imperatively from
+      `signIn()` at the moment of the approved transition (NOT via
+      a $effect — that pattern caused issue #1's infinite-loop chain
+      in the Svelte 5 effect scheduler). */
+  | { kind: "approved"; username: string | null }
   | { kind: "denied" }
   | { kind: "expired" }
   | { kind: "error"; message: string };
@@ -83,7 +90,23 @@ export type SigninState =
  *                      indicator until a future call resolves it.
  *   - `null`         — homepage isn't a GitHub URL; skip entirely.
  */
-export type StarredOutcome = boolean | "unknown" | null;
+/**
+ * The cached starred-state for a package.
+ * - `true` / `false` — fetched from GitHub, definitive answer
+ * - `null` — homepage isn't a GitHub URL; nothing to fetch
+ * - `"unknown"` — **display sentinel only** for "not yet fetched"; never
+ *   written to the cache itself (cache uses `undefined` for that state)
+ * - `"error"` — fetch was attempted but failed; do NOT refetch on every
+ *   read (would create an infinite loop with the PackageDetail effect)
+ *
+ * Issue #1 root cause: the catch block in `isStarred()` used to write
+ * `"unknown"` on failure, which collided with the cache-miss display
+ * sentinel. The PackageDetail effect couldn't distinguish "we tried
+ * and failed" from "we haven't tried yet", so it kept retrying. Each
+ * retry wrote the cache, re-triggered the effect, re-issued the IPC.
+ * Fix: use a distinct `"error"` value.
+ */
+export type StarredOutcome = boolean | "unknown" | "error" | null;
 
 class GithubStore {
   /** Last-known status from `githubStatus()`. Null until first load. */
@@ -113,6 +136,12 @@ class GithubStore {
   /** Per-session AbortController for the polling loop so `cancelSignin`
       can stop the in-flight loop without racing the modal close. */
   private pollAborter: AbortController | null = null;
+
+  /** Centralized write helper for `signinState`. Single place to gate
+      future cross-cutting concerns (logging, telemetry, invariants). */
+  private _setSignin(_reason: string, next: SigninState): void {
+    this.signinState = next;
+  }
 
   /** Read the latest sign-in status from the backend. Idempotent. */
   async loadStatus(): Promise<void> {
@@ -190,37 +219,39 @@ class GithubStore {
     if (this.signinState.kind === "waiting" || this.signinState.kind === "starting") {
       return; // already in flight
     }
-    this.signinState = { kind: "starting" };
+    this._setSignin("signIn-starting", { kind: "starting" });
     let start: DeviceFlowStart;
     try {
       start = await githubSigninStart();
     } catch (e) {
-      this.signinState = {
+      this._setSignin("signIn-startError", {
         kind: "error",
         message: isBrewError(e) ? brewErrorMessage(e) : String(e),
-      };
+      });
       return;
     }
 
     const expiresAt = Date.now() + start.expiresIn * 1000;
     let intervalMs = Math.max(start.interval, 5) * 1000;
-    this.signinState = {
+    this._setSignin("signIn-waiting", {
       kind: "waiting",
       userCode: start.userCode,
       verificationUri: start.verificationUri,
       deviceCode: start.deviceCode,
       expiresAt,
       intervalMs,
-    };
+    });
 
     // Loop. Bounded by expiresAt and by cancellation.
     this.pollAborter = new AbortController();
     const aborter = this.pollAborter;
+    let pollIteration = 0;
 
     while (true) {
+      pollIteration++;
       if (aborter.signal.aborted) return;
       if (Date.now() > expiresAt) {
-        this.signinState = { kind: "expired" };
+        this._setSignin("poll-expiresAt", { kind: "expired" });
         return;
       }
       // Wait one interval. We poll AFTER the wait so the very first
@@ -233,39 +264,53 @@ class GithubStore {
       try {
         result = await githubSigninPoll(start.deviceCode);
       } catch (e) {
-        this.signinState = {
+        this._setSignin("poll-error", {
           kind: "error",
           message: isBrewError(e) ? brewErrorMessage(e) : String(e),
-        };
+        });
         return;
       }
 
       if (result.kind === "approved") {
-        // IMPORTANT: refresh status BEFORE flipping signinState to
-        // "approved". The DeviceFlowModal's $effect fires the success
-        // toast the moment signinState becomes "approved" and reads
-        // `status.username` for the toast body — if status hasn't been
-        // hydrated yet, the toast falls back to "Signed in to GitHub"
-        // (and the Settings panel briefly shows "@github user" before
-        // catching up). Loading status first guarantees the toast and
-        // the panel both see the real username.
         await this.loadStatus();
-        this.signinState = { kind: "approved" };
+        const username = this.status?.username ?? null;
+        this._setSignin("poll-approved", { kind: "approved", username });
+        // ARCHITECTURAL: Fire the success toast IMPERATIVELY here, NOT
+        // via a $effect observing signinState in DeviceFlowModal. Per
+        // Svelte 5 docs and community guidance, $effect should NOT be
+        // used for one-shot side effects of state transitions — that
+        // pattern produces effect_update_depth_exceeded loops in the
+        // reactivity scheduler (see issue #1 root cause; this app
+        // exhibited 300+ effect re-runs per single signinState write).
+        // The toast belongs at the call site of the transition.
+        toast.success(username ? `Signed in as @${username}` : "Signed in to GitHub");
+        // Auto-close the modal 1.5s after success so the user reads
+        // the "Signed in as …" panel before it dismisses.
+        setTimeout(() => this.cancelSignin(), 1500);
         return;
       }
       if (result.kind === "denied") {
-        this.signinState = { kind: "denied" };
+        this._setSignin("poll-denied", { kind: "denied" });
+        toast.error("GitHub sign-in denied");
+        setTimeout(() => this.cancelSignin(), 2000);
         return;
       }
       if (result.kind === "expired") {
-        this.signinState = { kind: "expired" };
+        this._setSignin("poll-expired", { kind: "expired" });
+        toast.error("Sign-in code expired", "Try again.");
+        setTimeout(() => this.cancelSignin(), 2000);
         return;
       }
       if (result.kind === "slowDown") {
         // RFC 8628 §3.5 — double the interval, capped at 60s.
         intervalMs = Math.min(intervalMs * 2, 60_000);
-        if (this.signinState.kind === "waiting") {
-          this.signinState = { ...this.signinState, intervalMs };
+        // Force-widen via assertion — CFA narrowed signinState away
+        // from "waiting" because earlier `_setSignin` calls within
+        // this method confused it. The runtime value at this point
+        // genuinely can be "waiting".
+        const cur = this.signinState as SigninState;
+        if (cur.kind === "waiting") {
+          this._setSignin("poll-slowDown-reassign", { ...cur, intervalMs });
         }
         continue;
       }
@@ -280,7 +325,7 @@ class GithubStore {
   cancelSignin(): void {
     this.pollAborter?.abort();
     this.pollAborter = null;
-    this.signinState = { kind: "idle" };
+    this._setSignin("cancelSignin", { kind: "idle" });
   }
 
   /** Sign out: delete Keychain credentials, refresh status. */
@@ -334,12 +379,15 @@ class GithubStore {
       this.starredCache = next;
       return result;
     } catch (_e) {
-      // Any failure → "unknown". The UI surfaces the Star button in
-      // a neutral state; future calls retry.
+      // Failure → "error" (NOT "unknown" — see StarredOutcome doc).
+      // The cache records that we tried + failed; PackageDetail's
+      // effect treats "error" as a settled state and does not refetch.
+      // A future call (e.g., after the user clicks Star manually) will
+      // overwrite this entry with a fresh attempt.
       const next = new Map(this.starredCache);
-      next.set(homepage, "unknown");
+      next.set(homepage, "error");
       this.starredCache = next;
-      return "unknown";
+      return "error";
     }
   }
 

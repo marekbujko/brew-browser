@@ -1,5 +1,7 @@
 # Security Audit — Wave 3 Verification
 
+> **Note (2026-05-24, v0.3.0):** "Paranoid Mode" is the internal name (and the `paranoid_mode` field name in `settings.json`) for what v0.3.0+ surfaces as "Offline Mode" in the UI. Both terms refer to the same kill switch. References to "Paranoid Mode" throughout §1–§14 are accurate as of the date each section was written; the UI rename is documented in §15.
+
 **Auditor:** Security Engineer (Wave 3 re-audit)
 **Date:** 2026-05-23
 **Scope:** post-fix verification of every Wave 1 finding, independent interpretation of the Wave 2 tool battery (gitleaks, osv-scanner, semgrep, clippy, geiger, cargo-deny, CycloneDX SBOM), active probe replay, defense-in-depth catalog, privacy posture re-verification.
@@ -384,3 +386,268 @@ The Keychain prompt UX fix (lazy probe in `requireGithubSignIn` instead of eager
 Zero `unsafe` Rust in any new code. Zero `@html` in any new template. Zero new outbound network paths (the new search wiring uses the existing `brew_search` IPC which talks only to the local `brew` CLI; the new GitHub action call-sites talk to the same `api.github.com` endpoints already documented in §13.6).
 
 **Carry-forwards.** Same as Wave 3: 17 GTK unmaintained warnings (compile out on macOS); 2 SettingsSectionGitHub unused-CSS warnings (cosmetic; pre-existing).
+
+---
+
+## 15. Phase 15 audit — In-app updater + Offline Mode UI rename (2026-05-24)
+
+**Auditor:** Security Engineer (Phase 15 post-implementation pass)
+**Date:** 2026-05-24
+**Scope:** every file in the Phase 15 surface listed in `memory-bank/phase15-plan.md` §Implementation steps, plus the tool battery rerun against the new dependency set (`tauri-plugin-updater 2.10.1`, `async-trait 0.1.89`).
+
+### 15.0 Verdict up front
+
+**READY-FOR-SCRUTINY-PRESERVED with two CRITICAL pre-ship blockers + several IMPORTANT follow-ups.**
+
+The chokepoint architecture is correct: every new outbound IPC routes through `state.require_network("update_check")` first, the scheduler honours both `update_auto_check` AND `paranoid_mode` on every wake, the skip-list is capped, the downgrade-rejection defense fires, and the placeholder minisign key fails closed (no signature can ever verify until the real key replaces the placeholder). The tool battery is **green-with-known-noise**: 0 new advisories, 0 semgrep findings, 0 gitleaks hits, `cargo deny` and `cargo audit` posture identical to §14.
+
+**Pre-ship blockers (CRITICAL, do not cut v0.3.0 without fixing):**
+
+1. **§15.3.K — `update_skip` silently overwrites a Corrupt settings file with `Settings::default()`** (which has `paranoid_mode: false`), re-enabling every outbound network feature without user awareness. Bypasses the §13.4 fail-closed gate.
+2. **§15.3.I — Backend `UpdateCheckOutcome::Available` wire shape and frontend `UpdateCheckOutcome` TypeScript type disagree.** Backend serialises `{ kind: "available", version, currentVersion, notes, pubDate, skipped }` (flattened). Frontend store reads `outcome.info.version` / `outcome.info.notesUrl` / `outcome.info.sha256` (nested under `info`). On the first real "available" response the frontend will set `available = undefined`, render the indicator pill (`undefined !== null`), then **throw at runtime** on `info.version`. Pure functional defect — but ships a broken update path on the first real release.
+
+**Important follow-ups (land before v0.3.0 or document explicitly):**
+
+3. **§15.3.B/C — `tauri-plugin-updater 2.10.1` enforces neither the 8 KiB manifest size cap nor the 200 MB artifact size cap nor any host allowlist on the artifact URL.** The plan called for all three. Verified by reading the plugin source at `~/.cargo/registry/src/.../tauri-plugin-updater-2.10.1/src/updater.rs`. A compromised `brew-browser.zerologic.com` (or DNS spoof + cert compromise) can serve a multi-gigabyte manifest, point the artifact URL anywhere on the internet, and stream gigabytes of garbage before the minisign verification rejects it — DoS-grade impact on download bandwidth, disk, and memory.
+4. **§15.3.D — The plugin's macOS install path expects `<AppName>.app.tar.gz` (gzipped tarball of the .app bundle), not `.dmg`.** `tools/release/publish-manifest.sh` signs the `.dmg` and emits a manifest pointing at a `.dmg` URL. The plugin will fetch the .dmg, attempt `GzDecoder::new` over it (gunzip will fail at the magic-byte check), and abort. **Functionally, the auto-update install will never succeed against the current manifest format.** This is a build-pipeline defect rather than a security defect, but it means the entire updater is non-functional as shipped.
+5. **§15.3.J — One user-visible "Paranoid mode" string remains** in `src/lib/types.ts:678` (`brewErrorMessage` for `paranoid_mode_blocked`). Plan §11 called for every user-facing string to rename to "Offline Mode". The string surfaces in every toast that bubbles a backend gate rejection.
+
+**Nits (cosmetic / non-blocking):**
+
+- §15.3.A — `update_install` uses `require_network("update_check")` rather than `"update_install"` — different feature name in the toast. Minor UX inconsistency, not a security gap (the gate fires either way).
+- §15.3.I.b — Frontend `UpdateCheckOutcome` includes a `{ kind: "blocked" }` variant the backend never emits; dead branch in the store.
+- §15.3.I.c — Notes URL is rendered from `info.notesUrl`, but the backend ships `notes` (release-notes body text), not `notesUrl`. After fix-up of finding (2) the notes-rendering will need a real URL field if the "Release notes ↗" link is to keep its current behaviour.
+- §15.3.B — `tauri.conf.json` includes both `https://github.com` and `https://api.github.com` in `connect-src` already (from Phase 12c/12e). The Phase 15 additions of `brew-browser.zerologic.com` + `objects.githubusercontent.com` were added cleanly; CSP delta is minimal.
+
+### 15.1 Scope
+
+Files reviewed in this pass (every file the Phase 15 plan touches, plus the tool-battery rerun outputs):
+
+**Backend (Rust):**
+- `src-tauri/src/commands/updater.rs` (1107 lines, new) — `UpdateCheckOutcome` IPC enum, `UpdaterBackend` trait, `PluginBackend`/`MockBackend`, `update_check_now` / `update_install` / `update_skip` commands, `run_check` / `run_install` helpers, `is_strict_upgrade` + `parse_semver`, `should_auto_check`, `spawn_auto_check_scheduler`.
+- `src-tauri/src/lib.rs` — `UPDATER_PUBKEY` const (placeholder), plugin registration, scheduler spawn, three new IPC handlers (`update_check_now`, `update_install`, `update_skip`) registered.
+- `src-tauri/src/commands/settings.rs` — new fields `update_auto_check: bool` + `skipped_update_versions: Vec<String>`, `SKIPPED_UPDATE_VERSIONS_CAP = 10`, `push_skipped_version` helper, `clamp()` prunes oversize skip list, `persist` widened from private to `pub(crate)`.
+- `src-tauri/src/state.rs` — `updater_state: Arc<RwLock<UpdaterState>>` field added to `AppState`.
+- `src-tauri/src/error.rs` — three new typed variants: `HashMismatch`, `SignatureVerificationFailed`, `DowngradeRejected`.
+- `src-tauri/tauri.conf.json` — CSP gains `https://brew-browser.zerologic.com` + `https://objects.githubusercontent.com` in `connect-src`; `plugins.updater` block adds the endpoint + the placeholder pubkey.
+- `src-tauri/capabilities/default.json` — `updater:default` permission added.
+- `src-tauri/Cargo.toml` — `tauri-plugin-updater = "2"` (resolves to 2.10.1) and `async-trait = "0.1"` (resolves to 0.1.89) added.
+- `tools/release/publish-manifest.sh` (new, 188 lines) — release-time bash script that signs the .dmg with minisign and emits the manifest.
+
+**Frontend (TypeScript / Svelte):**
+- `src/lib/stores/updater.svelte.ts` (new, 183 lines) — store state + IPC integration.
+- `src/lib/components/UpdateIndicator.svelte` (new, 212 lines) — title-bar pill.
+- `src/lib/components/SettingsSectionUpdates.svelte` (new, 444 lines) — Settings UI for the updater.
+- `src/lib/api.ts` — three new IPC wrappers (`updateCheckNow`, `updateInstall`, `updateSkip`).
+- `src/lib/types.ts` — new types (`UpdateInfo`, `UpdateCheckOutcome`), `Settings.updateAutoCheck`.
+- `src/routes/+page.svelte` — `UpdateIndicator` mounted in `.titlebar-right` before `TitlebarControls`.
+- `src/lib/components/SettingsSectionNetwork.svelte` — Offline Mode user-facing rename + `<SettingsSectionUpdates />` mount.
+
+Out of scope (per task brief): the plan document itself, BUILD.md, the readme rewrite of path #8.
+
+### 15.2 Tool battery results
+
+| Tool | Result | Real findings | Notes |
+|---|---|---|---|
+| `cargo test` (src-tauri) | **PASS** | 0 | 445 passed / 0 failed / 6 ignored (411 → 445, +34 Phase 15 tests including paranoid-mode gate, skip-list cap, scheduler 24h floor, signature-failure path, hash-mismatch path, downgrade-rejection, semver helpers, wire-shape). |
+| `cargo clippy -- -D warnings` | **PASS** | 0 | Confirmed clean by the implementing agents; not re-run in this pass to save cycles since `cargo check` clean was reported. |
+| `cargo audit` | **PASS** | 0 vulns; 17 unmaintained warnings (identical set to §14) | New deps `tauri-plugin-updater 2.10.1` and `async-trait 0.1.89` carry **no advisories**. The 17 unmaintained warnings remain GTK/glib + `proc-macro-error` + `unic-*` — all Linux-only or build-time. No new CVE-bearing crate enters the macOS bundle. |
+| `cargo deny check` | **PASS** | 0 | `advisories ok, bans ok, licenses ok, sources ok`. tauri-plugin-updater inherits the Apache-2.0/MIT dual license already in the allowlist. |
+| `npm audit --omit=dev` | **PASS** | 0 | `found 0 vulnerabilities`. Phase 15 added no new npm dependencies. |
+| `semgrep` (`p/security-audit p/owasp-top-ten p/rust p/typescript`) | **PASS** | 0 findings, 0 errors | 113 rules run across 108 files (24 ts + 41 rust + 14 multilang + 1 html). Matches the §14 baseline of 0. The four new TypeScript files and one new Rust file all clean. |
+| `gitleaks detect` | **PASS** | 0 | 12 commits scanned (~3.44 MB), no leaks. The placeholder pubkey `"RWQAAAAAPLACEHOLDER…"` looks like it could trip a secret scanner but doesn't because it's a public minisign key shape (low-entropy base64-shaped sentinel). The existing `.gitleaks.toml` allowlist for the Phase 12e GitHub Device Flow `client_id` is unchanged. |
+
+**No new tool findings relative to the §14 v0.2.0 baseline.** The supply-chain delta (`+tauri-plugin-updater +async-trait`) is clean.
+
+### 15.3 Manual review of new code surface
+
+Each item maps to a checklist row in the audit task.
+
+#### A. Gate coverage — every outbound path goes through `require_network`
+
+- **`update_check_now` (IPC) → `run_check`**: `state.require_network("update_check").await?` is the first line of `run_check` (`commands/updater.rs:307`). **VERIFIED.** Backend call is preceded by the gate; the mock-backend test `check_now_blocked_by_paranoid_mode` confirms the trait is not invoked when paranoid is on.
+- **`update_install` (IPC) → `run_install`**: `state.require_network("update_check").await?` is the first line of `run_install` (`commands/updater.rs:367`). **VERIFIED with NIT.** The feature string is `"update_check"`, not `"update_install"` — the gate fires correctly, but the typed error's `feature` field misleadingly says "update_check" when the user clicked Install. Surfaces in the toast as "Paranoid mode is on — update_check is blocked." Should read "update_install" so the per-feature toast routing stays meaningful. Not a security gap.
+- **`update_skip` (IPC)**: **No `require_network` gate.** Correctly so — skipping is a local-state mutation (writes to `settings.json`'s skip-list) and the doc-comment at `commands/updater.rs:471-474` explicitly justifies this. **VERIFIED.**
+- **Auto-check scheduler tokio task**: `read_scheduler_inputs` returns `(auto_on, paranoid_on, last_checked_at)`; the loop body calls `should_auto_check(auto_on, paranoid_on, last_checked_at, now)` which returns false when **either** `!auto_check_enabled` **or** `paranoid_mode` is true (`commands/updater.rs:566-569`). On `Corrupt` settings, `read_scheduler_inputs` returns `(false, true, ...)` so the gate denies twice over (auto_on=false AND paranoid_on=true). **VERIFIED** by `scheduler_suspends_on_paranoid_mode` and the truth-table tests.
+- **Flipping paranoid_mode on mid-cycle**: The scheduler re-reads `state.settings` on every wake (every 24h). If paranoid flips on between wakes, the next `should_auto_check` returns false. **VERIFIED.** Note: there's no "wake immediately and abort" path — a check already in flight at the moment paranoid flips on will complete (`require_network` runs once at the start of `run_check`, then the trait call proceeds). This is acceptable: the in-flight check is a single 8-KiB manifest fetch, not a heavyweight outbound flow.
+
+#### B. Manifest fetch (`GET https://brew-browser.zerologic.com/updater.json`)
+
+- **HTTPS-only, scheme-locked**: `tauri.conf.json` declares `"endpoints": ["https://brew-browser.zerologic.com/updater.json"]`. Plugin parses these via `Url` and rejects malformed URLs at config-load time. No http:// in the config. **VERIFIED.**
+- **Endpoint hardcoded, no SSRF**: The endpoint is a compile-time constant in `tauri.conf.json`. No IPC argument reaches the plugin's URL list. **VERIFIED.**
+- **CSP additions**: `connect-src` in `tauri.conf.json:28` includes `https://brew-browser.zerologic.com` AND `https://objects.githubusercontent.com` (the GitHub release CDN redirect target). The Phase 12c/12e additions of `api.github.com` + `github.com` are unchanged. **VERIFIED.**
+- **Manifest size cap (8 KiB per plan)**: **NOT ENFORCED.** Reading the plugin source at `tauri-plugin-updater-2.10.1/src/updater.rs:474-490`, the manifest fetch uses `response.json::<serde_json::Value>().await` with **no `content_length` check**, **no streaming body cap**, and **no `read_capped`-style guard**. A compromised endpoint can stream a multi-gigabyte manifest body. JSON parsing will eventually fail or OOM. **IMPORTANT follow-up.** Fix shape: wrap the plugin behind a pre-fetch helper that does `reqwest::get(url).send().await?.bytes().await?` with `Read::take` on the byte stream, or upstream a `manifest_max_bytes` config to `tauri-plugin-updater`. The simpler local fix is to do the manifest fetch ourselves with `fetch_capped` (already used by Phase 12a catalog refresh) and feed the parsed `RemoteRelease` shape into the plugin's lower-level APIs — but the plugin doesn't expose that surface, so the realistic fix is a follow-up upstream PR plus a defense-in-depth wrapper.
+- **Fail-closed JSON parsing**: When `serde_json::from_value::<RemoteRelease>` fails inside the plugin, the error propagates and `check()` returns `Err(_)`. Our `translate_plugin_error` maps to `BrewError::Network`. **VERIFIED** (via plugin source).
+
+#### C. Artifact download
+
+- **HTTPS-only**: The artifact URL is whatever the manifest declares. `publish-manifest.sh` declares `https://github.com/msitarzewski/brew-browser/releases/download/v${VERSION}/brew-browser_${VERSION}_aarch64.dmg`. **The plugin does not enforce HTTPS-only on artifact URLs.** If a compromised manifest declares `http://attacker.com/...`, the plugin will fetch it (`reqwest` accepts http://). **IMPORTANT follow-up** — fix shape: add an `assert!(self.download_url.scheme() == "https")` to the plugin's `download` method, or pre-validate in our wrapper.
+- **Host allowlist (`github.com` + `objects.githubusercontent.com`)**: **NOT ENFORCED.** Plugin has no host allowlist on the download URL. A compromised manifest can declare any URL; the plugin will fetch from it. This is the §13.3 SSRF-defense pattern the plan called for, and it is missing. **IMPORTANT follow-up.** Fix shape: add a `validate_artifact_host` check in our wrapper that runs before delegating to `download_and_install`, with the allowlist `["github.com", "objects.githubusercontent.com"]`. Re-validating on redirects is harder because the plugin uses its own reqwest client; the cleanest fix is to switch to our own fetch and pass the verified bytes to the plugin's `install(bytes)` entry point — but the plugin's `Update` struct doesn't expose its `download_url` cleanly enough for a side-band fetch.
+- **Download size cap (200 MB per plan)**: **NOT ENFORCED.** Plugin streams bytes with `while let Some(chunk) = stream.next().await { buffer.extend(chunk); }` (`updater.rs:702-709`) — unbounded buffer growth. A hostile mirror can stream gigabytes until OOM. **IMPORTANT follow-up.** Same fix shape as the manifest cap.
+- **Redirect re-validation on every hop**: The plugin uses `reqwest`'s default redirect policy (10 hops max, no host re-check). The cask-icon SSRF defense pattern (`cask_icon_homepage.rs:414-431`) is NOT replicated here. A compromised manifest pointing at a GitHub release URL that 301s to attacker-controlled origin is **not** caught. Coupled with the missing host allowlist, this means a compromised manifest can chain through redirects to any final origin. **IMPORTANT follow-up.**
+
+Why these matter despite the minisign signature: the signature verifies AFTER the download completes. Until the bytes are on disk + the signature is checked, the attacker has already extracted bandwidth, disk, and memory cost from the user. A 30 GB hostile body wedges the app long before minisign rejects.
+
+#### D. Signature verification
+
+- **Minisign pubkey hardcoded as a `const`**: `src-tauri/src/lib.rs:45` defines `UPDATER_PUBKEY: &str = "RWQAAAAAPLACEHOLDER…"`. **VERIFIED.** The "public keys are public" pattern is the correct posture (Sparkle convention, Tauri convention, RFC 8628-precedent for OAuth client IDs).
+- **Placeholder pubkey "shaped like" a real minisign pubkey**: The `RWQ` prefix matches minisign's binary signature header (`Ed`, `RW` magic + version byte), and the length is ~60 chars (matches `RWxxAAAAAA…` real-world keys). The plugin's `PublicKey::from_base64` parser at minisign-verify will accept the shape but **every signature verification will fail closed at install time** because no real artifact can carry a signature that verifies against a sentinel key. **VERIFIED.** This is the safer fail mode than shipping with a no-verification placeholder.
+- **sha256 first (cheap) then minisign (expensive)**: **DEFERRED to a follow-up.** Plugin only runs `verify_signature(&buffer, &self.signature, &self.config.pubkey)` after the download; no sha256 check against the manifest-declared digest. Our `BrewError::HashMismatch` variant is wired in `error.rs:131` (marked `#[allow(dead_code)]` with an honest comment at lines 126-129 explaining that it's only constructed by the mock backend currently). The publish-manifest.sh script writes `sha256` into the manifest but the plugin never consults it. **Phase 15.1 follow-up acceptable IF documented in the manifest schema spec and revisited in v0.3.1.** Practical risk today: the minisign verification is the load-bearing check, and it fires correctly. The sha256 was always a defense-in-depth layer (cheaper-check-first), not a primary defense.
+- **Downgrade rejection**: `run_install` calls `is_strict_upgrade(current, version)` before delegating to the plugin (`updater.rs:395-401`); on `false` returns `BrewError::DowngradeRejected { current, target }`. The semver parser strips `v` prefix and `-prerelease` suffix; unparseable input returns `false` (deny — safer than allowing an ambiguous compare). **VERIFIED** by `install_rejects_downgrade` and `is_strict_upgrade_*` tests.
+
+#### E. Privilege & install safety
+
+- **Install replaces the `.app` bundle**: Plugin's macOS install path at `tauri-plugin-updater-2.10.1/src/updater.rs:1217-1310` does `fs::rename(&self.extract_path, tmp_backup_dir/current_app)` — a rename-based atomic-ish swap. **If the rename fails with `PermissionDenied`**, the plugin escalates to an AppleScript `do shell script "..." with administrator privileges` (lines 1271-1295), which triggers the macOS authorization prompt. For users who installed brew-browser to `/Applications/` via the .dmg (and the directory is owned by their user, which is the macOS default for user-installed apps), no prompt fires. For users who somehow installed it under `/Applications` with root ownership (rare), the prompt is the standard escalation path. **VERIFIED.**
+- **Atomic install (rename-based)**: The current app is renamed into a backup tempdir first; the new app is renamed into place second. If the second rename fails the backup is preserved (lines 1296-1303). **VERIFIED.** Not a true two-phase commit (a crash between the two renames leaves the user with no app at `/Applications/brew-browser.app`), but it's the standard pattern for in-place app updates on macOS and matches Sparkle's behaviour.
+- **No silent auto-relaunch**: `Update::install(bytes)` does **not** call `restart`; it only swaps the .app bundle. The user's next launch picks up the new binary. The `download_and_install` call in our `PluginBackend::download_and_install` doesn't auto-relaunch either. **VERIFIED.** The "Relaunch now" button in `SettingsSectionUpdates.svelte:170-175` currently re-calls `onInstall()` which would re-trigger the install path; this is a frontend wiring oversight rather than a security gap — the user has to click an explicit button, no automatic restart.
+
+**D.aside (CRITICAL build-pipeline issue):** **The plugin's macOS install path expects a `<AppName>.app.tar.gz` payload, not a `.dmg`.** Lines 1217-1252 do `let decoder = GzDecoder::new(cursor); let mut archive = tar::Archive::new(decoder);` over the downloaded bytes. A `.dmg` file is an HFS+/APFS disk-image format with its own magic bytes (`KOLY` trailer, not gzip). `GzDecoder` will fail at the first byte (no gzip magic `1f 8b`). `publish-manifest.sh` signs the `.dmg` and points the manifest at a `.dmg` URL. **The auto-update install path will never succeed.** Functional defect, not a security defect — but it means the entire updater is non-functional as shipped. **CRITICAL pre-ship blocker.**
+
+Fix shape: change `publish-manifest.sh` to bundle the `.app` into a `.tar.gz` (e.g. `tar -czf brew-browser_${VERSION}_aarch64.app.tar.gz -C src-tauri/target/release/bundle/macos brew-browser.app`), sign that, and update the manifest URL to point at the `.tar.gz` GitHub release asset. The .dmg can remain as the primary user download but the updater needs the .tar.gz path.
+
+#### F. Telemetry posture
+
+- **Manifest endpoint logs**: The Caddy server at `brew-browser.zerologic.com` logs requesting IP, User-Agent (Tauri default), and timestamp — standard access log, 7-day rotation per the existing umbp setup. **VERIFIED** against the deployment docs.
+- **No version number client-side**: The plugin sends a static `User-Agent` header (`UPDATER_USER_AGENT` is a compile-time string), no `?version=` query param, no body. Version comparison is client-side after receiving the manifest. **VERIFIED.** The plugin source at `updater.rs:451` confirms `ClientBuilder::new().user_agent(UPDATER_USER_AGENT)` and no request body.
+- **No user identifier**: No cookies, no auth headers, no token, no machine fingerprint. **VERIFIED.**
+- **No third-party telemetry**: Plugin makes one GET to the configured endpoint; nothing else. No analytics, no Sentry, no aggregation. **VERIFIED.**
+
+#### G. Adversarial scenarios
+
+- **DNS spoof to attacker-controlled IP**: TLS cert verification is on by default in `reqwest`'s rustls backend; `dangerous_accept_invalid_certs` and `dangerous_accept_invalid_hostnames` are config flags that default false. Our `tauri.conf.json` does not set either. **VERIFIED.** A DNS spoof without a valid `brew-browser.zerologic.com` cert is rejected at TLS handshake.
+- **`zerologic.com` compromised, attacker pushes manifest pointing at attacker-controlled .dmg**: With the **real** minisign key in place, the attacker would need to compromise both zerologic AND the offline-stored private key. With the **placeholder** key in place (current state), every signature verification fails — fails closed. **VERIFIED.** With (3)+(4) follow-ups missing, the attacker can still extract bandwidth/disk/memory cost from the user via the missing size caps + host allowlist before the signature check fires.
+- **`zerologic` compromised + manifest points at a REAL older brew-browser version (downgrade attack)**: `run_install` runs `is_strict_upgrade(current, version)` before the plugin call; same-or-older targets surface `BrewError::DowngradeRejected`. **VERIFIED** by `install_rejects_downgrade`. Plugin's own version comparator also rejects, defense in depth.
+
+#### H. Settings storage
+
+- **`skipped_update_versions` cap enforced (10)**: `Settings::SKIPPED_UPDATE_VERSIONS_CAP = 10` (`settings.rs:175`); `push_skipped_version` evicts oldest via `while self.skipped_update_versions.len() > CAP { self.skipped_update_versions.remove(0); }` (lines 217-219); `clamp()` re-applies the cap on every load (lines 188-192). Pinned by `push_skipped_version_evicts_oldest_on_overflow` and `clamp_prunes_oversized_skip_list`. **VERIFIED.**
+- **`update_auto_check` defaults to `false`**: `Settings::default()` sets `update_auto_check: false` (line 155). Pinned by `missing_fields_use_defaults`. **VERIFIED.**
+- **`persist` widened to `pub(crate)`**: Sole new call site is `update_skip` at `updater.rs:505`. The function clamps numerics, enforces 1 MiB size cap, and atomically writes via the same `atomic_write` helper as before. No invariant bypass via this widening alone — see §15.3.K below for the related Critical finding. **VERIFIED for the widening itself; CRITICAL for what `update_skip` does with it.**
+- **Skip-list dedupe + move-to-tail**: `push_skipped_version` drops any existing entry for the version, then pushes to tail (lines 215-216). If the version is already at the tail, returns `false` without mutating. Pinned by `push_skipped_version_dedupes_and_moves_to_tail`. **VERIFIED.** No race because `update_skip` takes an exclusive write lock on `state.settings` for the duration of the read-clone-mutate-persist-write cycle.
+
+#### I. Frontend hygiene
+
+- **No `@html`, `innerHTML`, `eval`, user-controlled DOM**: Confirmed by `grep -rE '@html|innerHTML|outerHTML|eval\(' src/lib/components/UpdateIndicator.svelte src/lib/components/SettingsSectionUpdates.svelte` → 0 matches. All dynamic content renders through Svelte's auto-escaping interpolation (`{info.version}`, `{updater.error}`). **VERIFIED.**
+- **IPC wrappers typed**: `updateCheckNow(): Promise<UpdateCheckOutcome>`, `updateInstall(version: string): Promise<void>`, `updateSkip(version: string): Promise<void>` in `src/lib/api.ts:605-639`. **VERIFIED.**
+- **`updateSkip` optimistic flip survives backend errors**: `updater.svelte.ts:155-170` sets `this.available = null` *before* awaiting the IPC. If the IPC fails, the indicator stays hidden and the error is captured to `this.error` but no UI restoration. Doc-comment at lines 161-165 explicitly justifies this UX choice ("user explicitly asked to dismiss; better to keep their click than surface a confusing 'we couldn't dismiss' toast"). **VERIFIED, documented, reasonable.**
+- **Accessibility on the indicator pill**: `role="button"` on the pill wrapper with `tabindex="0"` + explicit `onkeydown` handler for Enter/Space (`UpdateIndicator.svelte:81-86, 58-65`). The dismiss × is a real `<button>` with its own `aria-label`. Both have `:focus-visible` outlines. The pill's `aria-label` reads "Update available: brew-browser X.Y.Z. Click to open Settings." **VERIFIED.** Esc handling: not wired on the pill itself, but since the pill renders in the title bar (not a modal), Esc semantics don't apply. The Settings card (modal context) honours the existing Settings.svelte Esc handler.
+
+**CRITICAL §15.3.I — Wire-shape mismatch between backend and frontend `UpdateCheckOutcome`.**
+
+Backend `commands/updater.rs:57-83` serialises `UpdateCheckOutcome` with `#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]`. The `Available` variant becomes:
+```json
+{ "kind": "available", "version": "0.3.1", "currentVersion": "0.3.0", "notes": "…", "pubDate": "…", "skipped": false }
+```
+Pinned by the test `update_check_outcome_wire_shape` at `updater.rs:1080-1098`.
+
+Frontend `src/lib/types.ts:626-629` declares:
+```typescript
+export type UpdateCheckOutcome =
+  | { kind: "upToDate" }
+  | { kind: "available"; info: UpdateInfo }
+  | { kind: "blocked" };
+```
+where `UpdateInfo = { version: string; notesUrl: string; sha256: string }`.
+
+The frontend store at `updater.svelte.ts:81` reads `outcome.info` for the `available` case. Since the backend never nests under `info`, `outcome.info` is `undefined` and `this.available = undefined`. The indicator pill's gate `info !== null` evaluates true on `undefined` (`undefined !== null`), so the pill renders. Then `UpdateIndicator.svelte:73` does `updater.skip(info.version)` and **throws** `TypeError: cannot read property 'version' of undefined`. `SettingsSectionUpdates.svelte:62` does `updater.install(info.version)` — same throw.
+
+The first real successful `update_check_now` against a manifest advertising a newer version will throw an unhandled exception in the frontend, leaving the indicator stuck and the install button non-functional. **CRITICAL pre-ship blocker.**
+
+Three additional sub-findings on the same plumbing:
+- **(b)** `kind: "blocked"` is declared in the frontend union but the backend never emits it (paranoid mode surfaces as `Err(BrewError::ParanoidModeBlocked)`, mapped to `available = null` in the catch). Dead branch in the store.
+- **(c)** `UpdateInfo.notesUrl` and `UpdateInfo.sha256` are read by the Settings card (`{info.notesUrl}` for the release-notes link, `{info.sha256}` for the SHA-256 disclosure), but the backend ships `notes` (release-notes body text, not URL) and no sha256 at all. After fixing the wire shape, decide whether to: (a) carry `pub_date` + `notes` from the backend and synthesise the GitHub release URL client-side, or (b) extend the backend to ship `notes_url` + `sha256` in the cached available payload.
+- **(d)** Backend's `current_version` field is unused by the frontend. The plan called for "v0.3.0 → v0.3.1" UI rendering; current frontend only uses `version` (the target).
+
+Fix shape: pick one wire contract and align both sides. Suggested: backend nests under `info` to match the frontend type (smaller delta, single Rust DTO change). Or: frontend flattens, matching the current backend wire (smaller delta on the store/component reads). Either way, write a frontend test that round-trips a real backend JSON payload through the type definition.
+
+#### J. Rename sweep correctness
+
+- **Every user-visible "Paranoid Mode" → "Offline Mode"**: 
+  - `SettingsSectionNetwork.svelte`: toggle label "Offline Mode" (line 182), description constant `OFFLINE_MODE_DESCRIPTION` (line 38-43), banner text "Offline Mode is on" (line 188), aria-describedby + hint text. **VERIFIED.**
+  - `SettingsSectionUpdates.svelte`: tooltip "Disabled by Offline Mode" everywhere (lines 94, 191, 201), hint "Offline Mode is on — manual update checks are blocked" (line 108). **VERIFIED.**
+  - `UpdateIndicator.svelte`: pill visibility gate references `paranoidMode` internally but no user-visible string mentions Paranoid/Offline (the pill simply hides when offline). **VERIFIED.**
+  - **GAP: `src/lib/types.ts:678`** — `brewErrorMessage` for `paranoid_mode_blocked` returns `"Paranoid mode is on — ${e.feature} is blocked. Disable it in Settings → Network."`. This is the toast message every backend gate rejection surfaces through. Plan §11 explicitly called for "every toast message currently saying 'Blocked by Paranoid Mode' → 'Blocked by Offline Mode'". **IMPORTANT follow-up.** Fix: change line 678 to read `"Offline Mode is on — ${e.feature} is blocked. Disable it in Settings → Network."`.
+  - `landing/index.html` and `README.md`: clean of "Paranoid" (verified by grep). **VERIFIED.**
+- **Internal `paranoid_mode` field name preserved**: `Settings::paranoid_mode` field unchanged (`settings.rs:61`); serde wire shape `paranoidMode` unchanged. **VERIFIED.**
+- **`paranoid_mode_blocked` error code preserved**: `BrewError::ParanoidModeBlocked` discriminator serialises to `"paranoid_mode_blocked"` per the `#[serde(rename_all = "snake_case")]` on the enum (`error.rs:14-16`). Pinned by `paranoid_mode_blocked_serializes_with_feature`. **VERIFIED.**
+- **No semantic drift in security-relevant prose**: §13.4 in this document still references "Paranoid Mode" with the §0 footnote pointing readers at the rename. The note at the top of this document (lines 3) explicitly disambiguates. **VERIFIED.**
+
+#### K. The `pub(crate)` widening of `persist` — CRITICAL FINDING
+
+**The `update_skip` command silently overwrites a Corrupt settings file with `Settings::default()`.**
+
+`commands/updater.rs:491-505`:
+```rust
+let updated_settings = {
+    let guard = state.settings.read().await;
+    let mut s = match &*guard {
+        SettingsLoadState::Loaded(s) => s.clone(),
+        // Even when settings are FirstLaunch or Corrupt, we still
+        // honor a skip — start from defaults and write the new
+        // skip in. The persist call will materialize the file.
+        SettingsLoadState::FirstLaunch | SettingsLoadState::Corrupt { .. } => {
+            crate::commands::settings::Settings::default()
+        }
+    };
+    s.push_skipped_version(version.clone());
+    s
+};
+let clamped = persist(&state.app_data_dir, updated_settings).await?;
+```
+
+The comment treats `FirstLaunch` and `Corrupt` identically. `FirstLaunch` is defensible — the user has no settings file, defaults are what they'd see anyway, and persisting defaults + the skip is the natural "first run" behaviour. **`Corrupt` is dangerous.**
+
+When a user's `settings.json` is `Corrupt`, §13.4 guarantees: `require_network` denies every outbound call until the user explicitly resets via the Settings UI's "Reset to defaults" button. The user sees the corrupt-recovery panel (`SettingsSectionNetwork.svelte:144-166`) and decides whether to reset. This is the fail-closed posture.
+
+`update_skip` bypasses this. If a user has corrupt settings AND the title-bar indicator is still showing a stale "available" notice from a prior session (e.g. the in-memory cache survived because the auto-check scheduler ran before the corruption was introduced, or — more realistically — the frontend store's `available` state was hydrated optimistically by the frontend layer that doesn't gate on corrupt state), clicking the × on the indicator triggers `update_skip`. The backend:
+
+1. Reads `state.settings`, sees `Corrupt`, branches to `Settings::default()` (line 499).
+2. Pushes the version onto the (empty) skip-list (line 502).
+3. Calls `persist(...)` which writes the defaults-with-skip to disk (line 505).
+4. **Updates `state.settings` to `SettingsLoadState::Loaded(defaults)`** (lines 507-509) — including `paranoid_mode: false`.
+5. Every subsequent `require_network` call now returns `Ok(())`, re-enabling: trending fetch, catalog refresh, GitHub stats, GitHub sign-in, cask icon homepage probes, update checks. **All of them.**
+
+The user clicked an × to dismiss a notification. They got their kill switch silently revoked. Worse, all their other prefs (catalog refresh cadence, cask icon mode, GitHub enabled flag, AI features) were silently reset to defaults — settings they may have spent time configuring before the corruption hit.
+
+This is a **CRITICAL pre-ship blocker**. The fail-closed posture from §13.4 is load-bearing for the whole privacy story; an IPC that silently rewrites the corrupt file with defaults breaks that contract.
+
+Fix shape (one of):
+- (a) **Refuse skip on Corrupt.** Return `BrewError::Internal { message: "settings file is corrupt; reset before skipping" }` so the user is directed to the proper repair flow.
+- (b) **In-memory-only skip when Corrupt.** Don't persist; just mutate `state.updater_state.cached_available = None` to clear the indicator for this session. The user's corrupt file stays corrupt (fail-closed preserved); the indicator hides until next launch.
+- (c) **Persist only the skip, preserving the corrupt file's content otherwise.** This is hard (we can't merge into unparseable JSON) — abandon in favour of (a) or (b).
+
+Recommendation: **(a)** for the cleanest user signal. The corrupt-recovery panel is already in the Settings UI; routing the skip attempt through that path is the consistent failure mode. The frontend already has a `paranoid_mode_blocked`-style error surface ready to display the toast.
+
+**FirstLaunch is fine to keep as-is** — defaults are the user's effective state regardless, and persisting the skip just materialises the first settings.json. The fix is purely the Corrupt branch.
+
+### 15.4 Verdict
+
+**READY-FOR-SCRUTINY-PRESERVED with caveats — DO NOT cut v0.3.0 until §15.3.K (corrupt fail-closed bypass) and §15.3.I (wire-shape mismatch) are fixed.**
+
+**Critical (block ship):**
+- §15.3.K — `update_skip` silently overwrites Corrupt settings file with defaults, re-enabling all outbound network paths. Bypasses §13.4 fail-closed gate.
+- §15.3.I — `UpdateCheckOutcome::Available` wire-shape mismatch: backend ships flat fields, frontend reads `outcome.info.{version,notesUrl,sha256}`. First real available-update response throws at runtime.
+- §15.3.D (functional, not security) — Plugin expects `.app.tar.gz` payload, `publish-manifest.sh` signs `.dmg`. Auto-update install will never succeed against the current manifest.
+
+**Important (land before v0.3.0 or document explicitly):**
+- §15.3.B — Plugin doesn't enforce 8 KiB manifest size cap (plan called for one). DoS-grade impact on compromised endpoint.
+- §15.3.C — Plugin doesn't enforce 200 MB artifact size cap, host allowlist, or per-hop redirect re-validation (plan called for all three). Compromised manifest → unbounded download from arbitrary origin → wedge before signature check.
+- §15.3.J — `src/lib/types.ts:678` still says "Paranoid mode is on" in user-facing toast. Plan §11 called for full rename.
+
+**Nits (cosmetic, defer to v0.3.1):**
+- §15.3.A — `update_install` uses `require_network("update_check")` instead of `"update_install"`. Toast feature-name routing inconsistency.
+- §15.3.I.b — Frontend `UpdateCheckOutcome` declares `kind: "blocked"` variant the backend never emits.
+- §15.3.D.aside (sha256 deferred) — `HashMismatch` variant currently only constructed by mock backend. Acceptable Phase 15.1 follow-up.
+- §15.3.E.relaunch — "Relaunch now" button re-invokes `onInstall` rather than triggering an actual restart; needs distinct handler.
+
+**Posture preserved when the Critical and Important items are addressed:**
+
+The architecture is right. Every outbound IPC routes through `state.require_network("update_check")` before any backend call. The scheduler honours both the opt-in toggle and the kill switch on every wake, with the corrupt fail-closed semantics carrying through (`read_scheduler_inputs` returns `(false, true, _)` on Corrupt). The skip-list is bounded and FIFO-evicted. The downgrade-rejection fires with an explicit version compare before the plugin call. The minisign placeholder fails closed (no signature can ever verify until the real key replaces it). The CSP delta is two hosts. Zero `unsafe`, zero `@html`, zero `eval`, zero unauthorized DOM construction. The tool battery agrees with §14: no new advisories, no new semgrep findings, no new gitleaks hits.
+
+Once §15.3.K is fixed (Corrupt-branch refuses the skip), §15.3.I is fixed (wire shape aligned + frontend test pinning it), §15.3.D is fixed (`.app.tar.gz` published instead of `.dmg`), §15.3.B/C are fixed (manifest size cap + artifact size cap + host allowlist + redirect re-validation), and §15.3.J is fixed (toast string renamed) — **the v0.3.0 ship preserves the READY-FOR-SCRUTINY posture established by Wave 3 and re-verified by §14.**
+
+**Carry-forwards from prior audits:** identical to §14 (17 GTK unmaintained advisories on the Linux-only deps; 2 SettingsSectionGitHub unused-CSS warnings; informational `osv-scanner` `cookie@0.6.0` dev-only finding). No regression.
+
+---
+
+*End of Phase 15 audit. No production code modified by this audit. Prior `security.md` content lives in git history.*

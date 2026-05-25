@@ -185,16 +185,21 @@ main {
   padding: 56px 0 16px;
 }
 
-/* Hero screenshot — light/dark variants via <picture> + prefers-color-scheme. */
+/* Hero screenshot — light/dark variants via <picture> + prefers-color-scheme.
+   Constraint goes on the <picture> element itself (which is block-level
+   here) so the inner <img>'s natural pixel dimensions can't blow through
+   the cap. */
 .section-shots {
   padding: 24px 0 16px;
-  text-align: center;
+}
+.hero-shot {
+  display: block;
+  max-width: 900px;
+  margin: 0 auto;
 }
 .hero-shot img {
   display: block;
-  margin: 0 auto;
-  max-width: 100%;
-  width: min(900px, 100%);
+  width: 100%;
   height: auto;
   border-radius: 12px;
   box-shadow: 0 24px 48px -16px rgba(0, 0, 0, 0.45),

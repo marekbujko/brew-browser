@@ -6,8 +6,10 @@
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import Heart from "@lucide/svelte/icons/heart";
   import Check from "@lucide/svelte/icons/check";
+  import GithubMarkIcon from "./GithubMarkIcon.svelte";
 
   import { ui } from "$lib/stores/ui.svelte";
+  import { github } from "$lib/stores/github.svelte";
   import { safeOpenUrl } from "$lib/util/url";
   import { SPONSOR_URL } from "$lib/util/donate";
   import type { ThemePreference } from "$lib/types";
@@ -53,9 +55,48 @@
 
   function openSponsor() { void safeOpenUrl(SPONSOR_URL); }
 
+  /** GitHub connection status indicator state.
+   *
+   * Visible only when signed in (signed-out users don't need a chip
+   * reminding them they're not connected — the Settings panel is the
+   * place to discover the feature). Three colored states:
+   *
+   * - `ok` (green): signed in, has `public_repo` scope, all authed
+   *   actions (star/watch/file-issue) will work
+   * - `scope-incomplete` (amber): signed in, but `public_repo` is
+   *   missing from the recorded scopes — every authed action will
+   *   reject with ScopeRequired. Surfaces the issue-#1-companion bug
+   *   we just fixed: GitHub's `/oauth/access_token` returns scopes
+   *   comma-separated, the v0.2.1 parser was using split_whitespace
+   *   which produced a single-element array that didn't match the
+   *   `== "public_repo"` check in the action gate
+   * - hidden: not signed in
+   */
+  type GithubChipState = "ok" | "scope-incomplete" | "hidden";
+  const githubChipState = $derived.by<GithubChipState>(() => {
+    const s = github.status;
+    if (!s || !s.signedIn) return "hidden";
+    return s.scopes.includes("public_repo") ? "ok" : "scope-incomplete";
+  });
+
+  function openGithubSettings() {
+    ui.openSettings("github");
+  }
+
   onMount(() => {
     document.addEventListener("click", onDocClick);
     window.addEventListener("keydown", onKey);
+
+    // Eagerly load GitHub status so the connection-status chip can
+    // render its color on first paint. Touches Keychain → triggers
+    // the macOS ACL prompt for users who've previously signed in
+    // (one-time per binary signature; "Always Allow" remembers).
+    //
+    // v0.3.0 follow-up: gate this on a localStorage "has-signed-in-
+    // before" flag so users who never use GitHub see zero Keychain
+    // prompts. For v0.2.2 ship we accept the prompt friction.
+    void github.loadStatus();
+
     return () => {
       document.removeEventListener("click", onDocClick);
       window.removeEventListener("keydown", onKey);
@@ -64,6 +105,21 @@
 </script>
 
 <div class="cluster" data-tauri-drag-region="false" role="group" aria-label="App controls">
+  {#if githubChipState !== "hidden"}
+    <button
+      type="button"
+      class="ctrl github-chip"
+      class:ok={githubChipState === "ok"}
+      class:warn={githubChipState === "scope-incomplete"}
+      onclick={openGithubSettings}
+      title={githubChipState === "ok"
+        ? `GitHub: connected as @${github.status?.username ?? "user"}`
+        : "GitHub: signed in, but scope incomplete — click to fix"}
+      aria-label="GitHub connection status"
+    >
+      <GithubMarkIcon size={14} />
+    </button>
+  {/if}
   <button
     bind:this={themeBtn}
     type="button"
@@ -190,6 +246,14 @@
   /* Pink-filled heart for the Donate button. */
   .ctrl.donate { color: #ec4899; }
   .ctrl.donate:hover { color: #db2777; }
+
+  /* GitHub connection-status chip. Green = OK, amber = scope-incomplete.
+     Both shown at a slightly higher saturation than the muted default
+     so they pop without being garish. */
+  .ctrl.github-chip.ok { color: #16a34a; }       /* green-600 */
+  .ctrl.github-chip.ok:hover { color: #15803d; } /* green-700 */
+  .ctrl.github-chip.warn { color: #d97706; }      /* amber-600 */
+  .ctrl.github-chip.warn:hover { color: #b45309; }/* amber-700 */
 
   /* Theme dropdown popover. */
   .popover {

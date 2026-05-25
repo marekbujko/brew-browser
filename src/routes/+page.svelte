@@ -18,6 +18,7 @@
   import DeviceFlowModal from "$lib/components/DeviceFlowModal.svelte";
   import Toast from "$lib/components/Toast.svelte";
   import TitlebarControls from "$lib/components/TitlebarControls.svelte";
+  import UpdateIndicator from "$lib/components/UpdateIndicator.svelte";
   import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import PanelLeftOpen from "@lucide/svelte/icons/panel-left-open";
 
@@ -180,6 +181,7 @@
     </button>
     <h1 class="titlebar-title">{ui.pageTitle}</h1>
     <div class="titlebar-right">
+      <UpdateIndicator />
       <TitlebarControls />
     </div>
   </header>
@@ -316,6 +318,11 @@
     transform: translateY(calc(-50% + 1px));
     display: flex;
     align-items: center;
+    /* 8 px between the optional UpdateIndicator pill and the
+       TitlebarControls cluster (Phase 15). The indicator hides
+       entirely when there's no update available, so the gap is
+       absorbed by the layout — no empty space when nothing to show. */
+    gap: 8px;
   }
   .main {
     flex: 1;

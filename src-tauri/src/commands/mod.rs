@@ -20,6 +20,7 @@ pub mod search;
 pub mod services;
 pub mod settings;
 pub mod trending;
+pub mod updater;
 
 // Re-export every command in flat form so `invoke_handler!` can take them.
 pub use actions::*;
@@ -39,3 +40,4 @@ pub use search::*;
 pub use services::*;
 pub use settings::*;
 pub use trending::*;
+pub use updater::*;

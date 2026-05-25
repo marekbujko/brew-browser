@@ -78,7 +78,7 @@ brew-browser makes outbound network calls in exactly seven documented circumstan
 - **`brew` itself** — every install, uninstall, upgrade, search, and snapshot shells out to the real `brew` CLI. Whatever network calls `brew` makes (GitHub, OCI registries, bottle mirrors) happen exactly as they would if you ran the command yourself in a terminal. The full stdout/stderr stream is visible in the Activity drawer.
 - **Your default browser** — when you click the homepage button on a package, the URL is opened in your default browser via macOS `open(1)`. The app rejects any non-`http(s)` scheme before opening.
 
-Every outbound call respects the Network settings — set **Paranoid Mode** in Settings to block all outbound traffic in one click. Settings persist to `~/Library/Application Support/brew-browser/settings.json`; a corrupt or missing file fails closed (paranoid effectively on) until you hit Reset to defaults.
+Every outbound call respects the Network settings — flip on **Offline Mode** in Settings to block all outbound traffic in one click. Settings persist to `~/Library/Application Support/brew-browser/settings.json`; a corrupt or missing file fails closed (Offline Mode effectively on) until you hit Reset to defaults.
 
 No analytics. No crash reporting. No third-party fonts or pixels. No `fetch()` from the frontend — every backend call goes through typed Tauri IPC.
 
@@ -111,7 +111,7 @@ Contributions welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the dev loop
 
 ## Status
 
-**v0.2.1** shipped (signed + notarized). All seven core panes live: Dashboard, Library, Discover (with bundled catalog + 15,725 AI-curated friendly names and summaries), Trending, Snapshots, Services, and Activity. Optional GitHub integration via OAuth Device Flow is intent-discovered — sign-in only prompts when you actually try to star / watch / file an issue, never as static UI clutter. The Keychain is touched lazily so a fresh install never triggers a macOS auth prompt unless you actually use a GitHub feature. Settings ships with Paranoid Mode and a corrupt-recovery default. Native macOS title bar with traffic-light alignment, collapsible sidebar with persistent type-ahead search, (i) info popovers in place of AI badges for every enriched field. Expect rough edges in some app-icon edge cases (pkg-installer casks without `.app` bundles) and first-run niceties.
+**v0.2.1** shipped (signed + notarized). All seven core panes live: Dashboard, Library, Discover (with bundled catalog + 15,725 AI-curated friendly names and summaries), Trending, Snapshots, Services, and Activity. Optional GitHub integration via OAuth Device Flow is intent-discovered — sign-in only prompts when you actually try to star / watch / file an issue, never as static UI clutter. The Keychain is touched lazily so a fresh install never triggers a macOS auth prompt unless you actually use a GitHub feature. Settings ships with Offline Mode and a corrupt-recovery default. Native macOS title bar with traffic-light alignment, collapsible sidebar with persistent type-ahead search, (i) info popovers in place of AI badges for every enriched field. Expect rough edges in some app-icon edge cases (pkg-installer casks without `.app` bundles) and first-run niceties.
 
 **v0.2.1** (hotfix on top of v0.2.0):
 - Lazy Keychain probe — a fresh install no longer fires the macOS "wants to use your confidential information stored in dev.openbrew.browser" prompt on launch. `github.loadStatus()` only runs when you actually click Star / Watch / File-issue, or open Settings → GitHub.

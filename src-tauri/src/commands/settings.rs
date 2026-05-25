@@ -105,6 +105,25 @@ pub struct Settings {
     /// trigger any I/O, network, or LLM calls.
     #[serde(default = "default_ai_features_enabled")]
     pub ai_features_enabled: bool,
+
+    /// Phase 15 — opt-in daily auto-check for in-app updates. Default
+    /// **false** so a fresh install never reaches out to the manifest
+    /// endpoint without the user clicking either the manual "Check for
+    /// updates" button or this toggle. When enabled (and Offline Mode
+    /// is off), the scheduler in [`crate::commands::updater`] wakes
+    /// every 24 h and runs `update_check_now`. Paranoid mode and a
+    /// `Corrupt` settings state both suppress the scheduler — same gate
+    /// every other outbound feature consults.
+    #[serde(default)]
+    pub update_auto_check: bool,
+
+    /// Phase 15 — versions the user explicitly dismissed via the
+    /// title-bar indicator's `×` button. Bounded at 10 entries with
+    /// oldest-evicted-on-push (see [`Settings::push_skipped_version`]).
+    /// The skip is per-version: a *newer* release re-triggers the
+    /// indicator even if every previous version is in this list.
+    #[serde(default)]
+    pub skipped_update_versions: Vec<String>,
 }
 
 /// Default factory for [`Settings::ai_features_enabled`] — separated
@@ -130,6 +149,13 @@ impl Default for Settings {
             // a value-add the project wants to show off out of the box.
             // Toggling off reverts the UI to brew's native metadata only.
             ai_features_enabled: default_ai_features_enabled(),
+            // Off by default per Phase 15 plan: the manifest endpoint
+            // stays cold until the user explicitly opts in (or hits the
+            // manual "Check for updates" button).
+            update_auto_check: false,
+            // Empty by default — populated as the user dismisses
+            // individual versions via the title-bar indicator's `×`.
+            skipped_update_versions: Vec::new(),
         }
     }
 }
@@ -143,6 +169,10 @@ impl Settings {
     pub const TRENDING_TTL_MIN: u32 = 5;
     /// Inclusive upper bound for `trending_ttl_minutes`.
     pub const TRENDING_TTL_MAX: u32 = 1440;
+    /// Phase 15 — maximum entries kept in [`Self::skipped_update_versions`].
+    /// Push beyond this evicts the oldest entry (FIFO) so the list
+    /// can't grow without bound across decades of releases.
+    pub const SKIPPED_UPDATE_VERSIONS_CAP: usize = 10;
 
     /// Apply the numeric clamps declared in the field docs. Idempotent;
     /// safe to call on already-clamped values.
@@ -153,6 +183,41 @@ impl Settings {
         self.trending_ttl_minutes = self
             .trending_ttl_minutes
             .clamp(Self::TRENDING_TTL_MIN, Self::TRENDING_TTL_MAX);
+        // Enforce the cap on every load/save in addition to the push
+        // helper so a hand-edited settings.json with 50 skip entries
+        // gets pruned on read.
+        if self.skipped_update_versions.len() > Self::SKIPPED_UPDATE_VERSIONS_CAP {
+            let excess = self.skipped_update_versions.len() - Self::SKIPPED_UPDATE_VERSIONS_CAP;
+            self.skipped_update_versions.drain(..excess);
+        }
+    }
+
+    /// Phase 15 — push `version` onto [`Self::skipped_update_versions`]
+    /// with FIFO eviction when the cap is reached. Duplicate-safe: if
+    /// `version` is already in the list, the entry is moved to the
+    /// tail (so a re-skip refreshes its position rather than padding
+    /// the cap with duplicates).
+    ///
+    /// Returns `true` when the list changed, `false` when the version
+    /// was already at the tail. Callers persist the settings whenever
+    /// this returns `true`.
+    #[allow(dead_code)] // used by Phase 15 updater commands
+    pub fn push_skipped_version(&mut self, version: String) -> bool {
+        // De-duplicate: drop any existing entry for this version so the
+        // push always moves it to the tail.
+        let already_at_tail = self
+            .skipped_update_versions
+            .last()
+            .is_some_and(|v| v == &version);
+        if already_at_tail {
+            return false;
+        }
+        self.skipped_update_versions.retain(|v| v != &version);
+        self.skipped_update_versions.push(version);
+        while self.skipped_update_versions.len() > Self::SKIPPED_UPDATE_VERSIONS_CAP {
+            self.skipped_update_versions.remove(0);
+        }
+        true
     }
 }
 
@@ -352,7 +417,7 @@ async fn load_async(app_data_dir: &Path) -> SettingsLoadState {
 /// to bytes, (3) reject if the byte length exceeds the cap, (4)
 /// `atomic_write` into place, (5) return the clamped struct so callers
 /// can re-broadcast the canonicalized values.
-async fn persist(app_data_dir: &Path, mut settings: Settings) -> Result<Settings, BrewError> {
+pub(crate) async fn persist(app_data_dir: &Path, mut settings: Settings) -> Result<Settings, BrewError> {
     settings.clamp();
     let bytes = serde_json::to_vec_pretty(&settings).map_err(|e| BrewError::Internal {
         message: format!("serialize settings: {e}"),
@@ -507,6 +572,8 @@ mod tests {
             trending_ttl_minutes: 120,
             github_enabled: true,
             ai_features_enabled: false,
+            update_auto_check: true,
+            skipped_update_versions: vec!["0.3.0".into(), "0.3.1".into()],
         };
         let written = persist(tmp.path(), s.clone()).await.expect("persist");
         assert_eq!(written, s);
@@ -563,6 +630,8 @@ mod tests {
             trending_ttl_minutes: 1, // below the 5-minute floor
             github_enabled: false,
             ai_features_enabled: true,
+            update_auto_check: false,
+            skipped_update_versions: Vec::new(),
         };
         let written = persist(tmp.path(), s).await.expect("persist");
         assert_eq!(written.catalog_stale_banner_days, Settings::CATALOG_STALE_DAYS_MAX);
@@ -657,6 +726,137 @@ mod tests {
                 // files (pre-existing installs see categories + enrichment
                 // turned on as soon as they upgrade).
                 assert!(s.ai_features_enabled);
+                // `update_auto_check` was added in Phase 15 — must default
+                // to false for forward compat with pre-15 settings files.
+                assert!(!s.update_auto_check);
+                // `skipped_update_versions` was added in Phase 15 — must
+                // default to an empty vec.
+                assert!(s.skipped_update_versions.is_empty());
+            }
+            other => panic!("expected Loaded, got {other:?}"),
+        }
+    }
+
+    // ---------- Phase 15 — skip-list cap + helpers ----------
+
+    /// Push helper adds entries in order until the cap is reached.
+    #[test]
+    fn push_skipped_version_appends_until_cap() {
+        let mut s = Settings::default();
+        for i in 0..Settings::SKIPPED_UPDATE_VERSIONS_CAP {
+            let changed = s.push_skipped_version(format!("0.3.{i}"));
+            assert!(changed, "first-time push of unique version must change");
+        }
+        assert_eq!(
+            s.skipped_update_versions.len(),
+            Settings::SKIPPED_UPDATE_VERSIONS_CAP
+        );
+    }
+
+    /// Phase 15 §Tests #5 — adding the 11th skip evicts the oldest entry.
+    /// This is the canonical bound test.
+    #[test]
+    fn push_skipped_version_evicts_oldest_on_overflow() {
+        let mut s = Settings::default();
+        // Fill to cap.
+        for i in 0..Settings::SKIPPED_UPDATE_VERSIONS_CAP {
+            s.push_skipped_version(format!("v{i}"));
+        }
+        assert_eq!(s.skipped_update_versions[0], "v0");
+
+        // 11th push: oldest (v0) must be gone, newest (vN) must be at tail.
+        let new_version = format!("v{}", Settings::SKIPPED_UPDATE_VERSIONS_CAP);
+        s.push_skipped_version(new_version.clone());
+        assert_eq!(
+            s.skipped_update_versions.len(),
+            Settings::SKIPPED_UPDATE_VERSIONS_CAP
+        );
+        assert!(
+            !s.skipped_update_versions.contains(&"v0".to_string()),
+            "oldest entry v0 should have been evicted"
+        );
+        assert_eq!(
+            s.skipped_update_versions.last(),
+            Some(&new_version),
+            "newest entry should be at tail"
+        );
+    }
+
+    /// Re-pushing an existing version moves it to the tail without
+    /// growing the list past the cap.
+    #[test]
+    fn push_skipped_version_dedupes_and_moves_to_tail() {
+        let mut s = Settings::default();
+        s.push_skipped_version("a".into());
+        s.push_skipped_version("b".into());
+        s.push_skipped_version("c".into());
+
+        // Re-push "a" — should move to tail, length unchanged.
+        let changed = s.push_skipped_version("a".into());
+        assert!(changed);
+        assert_eq!(s.skipped_update_versions, vec!["b", "c", "a"]);
+
+        // Pushing the current tail again is a no-op.
+        let changed = s.push_skipped_version("a".into());
+        assert!(!changed);
+        assert_eq!(s.skipped_update_versions, vec!["b", "c", "a"]);
+    }
+
+    /// Hand-edited settings.json with a too-long skip list gets pruned
+    /// on load via clamp().
+    #[test]
+    fn clamp_prunes_oversized_skip_list() {
+        let mut s = Settings::default();
+        for i in 0..(Settings::SKIPPED_UPDATE_VERSIONS_CAP * 3) {
+            s.skipped_update_versions.push(format!("v{i}"));
+        }
+        s.clamp();
+        assert_eq!(
+            s.skipped_update_versions.len(),
+            Settings::SKIPPED_UPDATE_VERSIONS_CAP
+        );
+        // The most-recent half is retained; the oldest two-thirds are dropped.
+        assert!(
+            !s.skipped_update_versions
+                .contains(&"v0".to_string()),
+            "oldest entries should have been dropped"
+        );
+    }
+
+    /// Phase 15 — wire shape gate. The new fields must round-trip with
+    /// camelCase JSON keys (`updateAutoCheck`, `skippedUpdateVersions`)
+    /// so the frontend store can rely on the contract.
+    #[tokio::test]
+    async fn phase15_fields_round_trip_with_camel_case_keys() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let s = Settings {
+            update_auto_check: true,
+            skipped_update_versions: vec!["1.0.0".into()],
+            ..Settings::default()
+        };
+        persist(tmp.path(), s.clone()).await.expect("persist");
+
+        let raw = tokio::fs::read_to_string(settings_path(tmp.path()))
+            .await
+            .expect("read raw");
+        assert!(
+            raw.contains("\"updateAutoCheck\""),
+            "expected camelCase updateAutoCheck key in raw JSON, got: {raw}"
+        );
+        assert!(
+            raw.contains("\"skippedUpdateVersions\""),
+            "expected camelCase skippedUpdateVersions key in raw JSON, got: {raw}"
+        );
+        assert!(
+            !raw.contains("\"update_auto_check\""),
+            "must not emit snake_case key"
+        );
+
+        let reloaded = load_async(tmp.path()).await;
+        match reloaded {
+            SettingsLoadState::Loaded(loaded) => {
+                assert!(loaded.update_auto_check);
+                assert_eq!(loaded.skipped_update_versions, vec!["1.0.0"]);
             }
             other => panic!("expected Loaded, got {other:?}"),
         }

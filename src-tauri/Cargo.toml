@@ -17,6 +17,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Phase 15 — in-app updater (manifest fetch, sha256 + minisign verify,
+# atomic .app bundle replacement). Plugin endpoint + minisign public
+# key are wired in `tauri.conf.json` and `src/lib.rs` respectively.
+tauri-plugin-updater = "2"
+# Phase 15 — needed for the `UpdaterBackend` trait abstraction so unit
+# tests can swap in a mock implementation without going through the
+# real plugin (which requires a live `App` + HTTP).
+async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros", "sync", "time"] }

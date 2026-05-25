@@ -25,7 +25,15 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https://formulae.brew.sh https://api.github.com https://github.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; connect-src 'self' https://formulae.brew.sh https://api.github.com https://github.com https://brew-browser.zerologic.com https://objects.githubusercontent.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://brew-browser.zerologic.com/updater.json"
+      ],
+      "pubkey": "RWQAAAAAPLACEHOLDER_REPLACE_BEFORE_RELEASE_SEE_BUILD_MDxxxxxxxxxx"
     }
   },
   "bundle": {

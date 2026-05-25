@@ -24,7 +24,7 @@
    * which aborts the poll loop and flips state back to idle.
    */
 
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy } from "svelte";
   import X from "@lucide/svelte/icons/x";
   import ExternalLink from "@lucide/svelte/icons/external-link";
   import Loader from "@lucide/svelte/icons/loader-2";
@@ -35,6 +35,11 @@
   import { github } from "$lib/stores/github.svelte";
   import { safeOpenUrl } from "$lib/util/url";
   import { toast } from "$lib/stores/toast.svelte";
+  // NOTE: `toast` is still used inside copyCode()'s clipboard handlers
+  // (Code copied to clipboard / Couldn't copy code). Those are
+  // event-handler-driven imperative toasts — the correct Svelte 5
+  // pattern. The signin-result toast is fired from github.svelte.ts's
+  // signIn() poll loop at the moment of transition, NOT via $effect.
 
   /** True when the modal should be visible. Idle state hides it. */
   let isOpen = $derived(github.signinState.kind !== "idle");
@@ -70,38 +75,13 @@
     };
   });
 
-  /** Auto-dismiss the terminal states after a beat so the user sees
-      the outcome but the modal doesn't linger.
-
-      `github.status?.username` is wrapped in `untrack` so this effect's
-      ONLY reactive dependency is `signinState`. Without it, every
-      post-sign-in status hydration (or any later status refresh while
-      still in "approved" state) would re-run the effect and queue
-      another toast — the symptom was a stack of "Signed in to GitHub"
-      toasts up the right edge of the window. */
-  $effect(() => {
-    const s = github.signinState;
-    if (s.kind === "approved") {
-      const name = untrack(() => github.status?.username);
-      toast.success(name ? `Signed in as @${name}` : "Signed in to GitHub");
-      const t = setTimeout(() => github.cancelSignin(), 1500);
-      return () => clearTimeout(t);
-    }
-    if (s.kind === "denied") {
-      toast.error("GitHub sign-in denied");
-      const t = setTimeout(() => github.cancelSignin(), 2000);
-      return () => clearTimeout(t);
-    }
-    if (s.kind === "expired") {
-      toast.error("Sign-in code expired", "Try again.");
-      const t = setTimeout(() => github.cancelSignin(), 2000);
-      return () => clearTimeout(t);
-    }
-    // NOTE: `error` state intentionally does NOT toast — the modal renders
-    // the message inline (see {:else if signinState.kind === "error"} below),
-    // and clicking Sign in again would otherwise spawn a new toast per
-    // attempt, stacking them up the right edge of the window.
-  });
+  // The signin-result toast + auto-dismiss timer USED to live here as
+  // a $effect watching signinState. Per Svelte 5 official guidance
+  // ($effect is an "escape hatch" — don't use it for one-shot side
+  // effects of state transitions), the toast + setTimeout are now
+  // fired imperatively in github.svelte.ts's signIn() poll loop at
+  // the moment of the transition. See issue #1 root cause for the
+  // effect_update_depth_exceeded chain this $effect pattern produced.
 
   function onCancel() {
     github.cancelSignin();

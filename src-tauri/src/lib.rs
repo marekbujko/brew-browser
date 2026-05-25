@@ -17,6 +17,37 @@ mod util;
 
 use commands::*;
 
+// =============================================================
+// Phase 15 — Updater minisign public key
+// =============================================================
+//
+// The public key half of the minisign keypair used to sign release
+// .dmg artifacts. Public keys are public by design — embedding them
+// in the binary is the standard pattern for offline-verified updates
+// (Sparkle, Tauri, every shipping Mac auto-updater).
+//
+// **Placeholder.** Replace before cutting a release. The real key is
+// generated per `BUILD.md` instructions:
+//
+//     tauri signer generate -w ~/.config/brew-browser/updater.key
+//
+// The matching public key the command prints is what goes here.
+// Keep the private key chmod 600 outside the repo — it's the only
+// thing standing between a compromised brew-browser.zerologic.com
+// and a malicious binary push.
+//
+// The placeholder shape (`RWQ…`) is what a real minisign pubkey
+// looks like (base64-encoded ed25519 public key, ~56 bytes) so the
+// updater plugin doesn't reject the string on parse. The signature
+// verification at install time will fail closed on every artifact
+// until this is replaced with the real key — the safer failure mode
+// than shipping with a "skip verification" placeholder.
+const UPDATER_PUBKEY: &str = "RWQAAAAAPLACEHOLDER_REPLACE_BEFORE_RELEASE_SEE_BUILD_MDxxxxxxxxxx";
+
+pub fn updater_pubkey() -> &'static str {
+    UPDATER_PUBKEY
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Best-effort tracing setup — silent if RUST_LOG is unset.
@@ -30,10 +61,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // Phase 15 — register the updater plugin. The endpoint URL and
+        // public key are configured in `tauri.conf.json`; the plugin
+        // pulls them from the parsed Config at startup. Our IPC
+        // wrappers in `commands::updater` route every check + install
+        // through `state.require_network("update_check")` first so
+        // Offline Mode kills the path even though the plugin itself
+        // would otherwise try the manifest endpoint.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .menu(build_app_menu)
         .on_menu_event(handle_menu_event)
         .setup(|app| {
             state::initialize(app)?;
+            // Phase 15 — spawn the auto-check scheduler. The task
+            // sleeps for 24h between wakes, re-reads the live settings
+            // on each cycle (so a user toggling auto-check off mid-run
+            // is honoured on the next wake), and runs the check only
+            // when both `update_auto_check` is on AND `paranoid_mode`
+            // is off. Backoff on failure: 1h → 6h → 24h.
+            commands::updater::spawn_auto_check_scheduler(app.handle().clone());
             #[cfg(target_os = "macos")]
             {
                 // Apply NSVisualEffectView to the main window so it picks up the
@@ -112,6 +158,9 @@ pub fn run() {
             github_watch,
             github_unwatch,
             github_create_issue,
+            update_check_now,
+            update_install,
+            update_skip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

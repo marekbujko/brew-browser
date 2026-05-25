@@ -28,11 +28,18 @@ use crate::github::{
 };
 use crate::state::AppState;
 
-/// OAuth scope required for every Phase 12f authed action (star,
-/// unstar, watch, unwatch, create_issue). `public_repo` is the
-/// minimum that grants write-ish operations against public repos
-/// without touching private-repo write access (which would be `repo`).
-const REQUIRED_SCOPE: &str = "public_repo";
+/// Per-action OAuth scope requirement. v0.2.2 split this from a single
+/// constant after discovering that GitHub's `PUT /repos/{o}/{r}/subscription`
+/// (the watch endpoint) requires `notifications` specifically — `public_repo`
+/// alone returns HTTP 404 (their privacy-preserving mask for "you don't
+/// have the scope"). The action gate now checks the per-action required
+/// scope, and the typed `ScopeRequired { scope }` error carries the SPECIFIC
+/// scope name so the frontend can render an actionable "Re-authorize"
+/// toast that triggers an incremental scope grant (signIn() with the full
+/// GITHUB_OAUTH_SCOPES list — GitHub's consent screen surfaces only the
+/// new scope, the existing ones display as "already granted").
+const SCOPE_PUBLIC_REPO: &str = "public_repo";
+const SCOPE_NOTIFICATIONS: &str = "notifications";
 
 // ---------- Repo stats (12c) ----------
 
@@ -149,10 +156,18 @@ pub async fn github_signout(_state: State<'_, AppState>) -> Result<(), BrewError
 /// Common gate chain for every Phase 12f authed action. Returns a
 /// `(client, repo, token)` triple on success; surfaces the typed
 /// error on any gate failure.
+///
+/// `required_scope` is the OAuth scope this specific action needs.
+/// The gate pre-emptively checks the cached scope list and returns
+/// `ScopeRequired { scope }` if missing — saves a round-trip to GitHub
+/// AND gives the frontend the SPECIFIC scope name (so the actionable
+/// re-auth toast can be precise: "Watch needs `notifications`. Re-
+/// authorize?").
 async fn authed_gate(
     state: &AppState,
     homepage: &str,
     feature: &'static str,
+    required_scope: &str,
 ) -> Result<(reqwest::Client, GithubRepo, Token), BrewError> {
     // 1. Paranoid-mode gate.
     state.require_network(feature).await?;
@@ -172,9 +187,9 @@ async fn authed_gate(
     // 4. Scope gate. The scope list is cached at sign-in and read from
     //    the Keychain — no extra GitHub round-trip required.
     let scopes = auth::read_scopes()?.unwrap_or_default();
-    if !scopes.iter().any(|s| s == REQUIRED_SCOPE) {
+    if !scopes.iter().any(|s| s == required_scope) {
         return Err(BrewError::ScopeRequired {
-            scope: REQUIRED_SCOPE.to_string(),
+            scope: required_scope.to_string(),
         });
     }
 
@@ -190,7 +205,8 @@ pub async fn github_star(
     homepage: String,
     state: State<'_, AppState>,
 ) -> Result<(), BrewError> {
-    let (client, repo, token) = authed_gate(&state, &homepage, "github_star").await?;
+    let (client, repo, token) =
+        authed_gate(&state, &homepage, "github_star", SCOPE_PUBLIC_REPO).await?;
     actions::star(&client, &repo, &token).await
 }
 
@@ -199,7 +215,8 @@ pub async fn github_unstar(
     homepage: String,
     state: State<'_, AppState>,
 ) -> Result<(), BrewError> {
-    let (client, repo, token) = authed_gate(&state, &homepage, "github_unstar").await?;
+    let (client, repo, token) =
+        authed_gate(&state, &homepage, "github_unstar", SCOPE_PUBLIC_REPO).await?;
     actions::unstar(&client, &repo, &token).await
 }
 
@@ -208,7 +225,8 @@ pub async fn github_is_starred(
     homepage: String,
     state: State<'_, AppState>,
 ) -> Result<bool, BrewError> {
-    let (client, repo, token) = authed_gate(&state, &homepage, "github_is_starred").await?;
+    let (client, repo, token) =
+        authed_gate(&state, &homepage, "github_is_starred", SCOPE_PUBLIC_REPO).await?;
     actions::is_starred(&client, &repo, &token).await
 }
 
@@ -217,7 +235,8 @@ pub async fn github_watch(
     homepage: String,
     state: State<'_, AppState>,
 ) -> Result<(), BrewError> {
-    let (client, repo, token) = authed_gate(&state, &homepage, "github_watch").await?;
+    let (client, repo, token) =
+        authed_gate(&state, &homepage, "github_watch", SCOPE_NOTIFICATIONS).await?;
     actions::watch(&client, &repo, &token).await
 }
 
@@ -226,7 +245,8 @@ pub async fn github_unwatch(
     homepage: String,
     state: State<'_, AppState>,
 ) -> Result<(), BrewError> {
-    let (client, repo, token) = authed_gate(&state, &homepage, "github_unwatch").await?;
+    let (client, repo, token) =
+        authed_gate(&state, &homepage, "github_unwatch", SCOPE_NOTIFICATIONS).await?;
     actions::unwatch(&client, &repo, &token).await
 }
 
@@ -239,7 +259,7 @@ pub async fn github_create_issue(
     state: State<'_, AppState>,
 ) -> Result<CreatedIssue, BrewError> {
     let (client, repo, token) =
-        authed_gate(&state, &homepage, "github_create_issue").await?;
+        authed_gate(&state, &homepage, "github_create_issue", SCOPE_PUBLIC_REPO).await?;
     // Convert Vec<String> to &[&str] for the borrowed-slice API. The
     // sanitiser then takes owned Strings back for the JSON payload.
     let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -473,6 +493,7 @@ mod tests {
         state: &AppState,
         homepage: &str,
         feature: &'static str,
+        required_scope: &str,
         kc: &dyn KeychainSlot,
     ) -> Result<(GithubRepo, Token), BrewError> {
         state.require_network(feature).await?;
@@ -481,9 +502,9 @@ mod tests {
         })?;
         let token = auth::read_token_with(kc)?.ok_or(BrewError::AuthRequired)?;
         let scopes = auth::read_scopes_with(kc)?.unwrap_or_default();
-        if !scopes.iter().any(|s| s == REQUIRED_SCOPE) {
+        if !scopes.iter().any(|s| s == required_scope) {
             return Err(BrewError::ScopeRequired {
-                scope: REQUIRED_SCOPE.to_string(),
+                scope: required_scope.to_string(),
             });
         }
         Ok((repo, token))
@@ -564,6 +585,7 @@ mod tests {
             &state,
             "https://github.com/octocat/hello-world",
             "github_star",
+            SCOPE_PUBLIC_REPO,
             &kc,
         )
         .await;
@@ -583,12 +605,38 @@ mod tests {
             &state,
             "https://github.com/octocat/hello-world",
             "github_star",
+            SCOPE_PUBLIC_REPO,
             &kc,
         )
         .await;
         match r {
             Err(BrewError::ScopeRequired { scope }) => assert_eq!(scope, "public_repo"),
             other => panic!("expected ScopeRequired(public_repo), got {other:?}"),
+        }
+    }
+
+    /// v0.2.2: watch / unwatch require `notifications`, not `public_repo`.
+    /// A token with public_repo but no notifications must surface
+    /// `ScopeRequired { scope: "notifications" }` so the frontend can
+    /// render an actionable "Re-authorize" toast that fires an
+    /// incremental scope grant via `signIn()`. Pre-empts the GitHub-
+    /// returns-404-for-missing-scope behaviour at the watch endpoint.
+    #[tokio::test]
+    async fn authed_gate_returns_scope_required_when_notifications_missing() {
+        let state = build_state_with(SettingsLoadState::Loaded(Settings::default())).await;
+        let kc =
+            MockKeychain::with_token_and_scopes("ghp_test", &["read:user", "public_repo"]);
+        let r = inner_authed_gate_with_kc(
+            &state,
+            "https://github.com/octocat/hello-world",
+            "github_watch",
+            SCOPE_NOTIFICATIONS,
+            &kc,
+        )
+        .await;
+        match r {
+            Err(BrewError::ScopeRequired { scope }) => assert_eq!(scope, "notifications"),
+            other => panic!("expected ScopeRequired(notifications), got {other:?}"),
         }
     }
 
@@ -603,6 +651,7 @@ mod tests {
             &state,
             "https://github.com/octocat/hello-world",
             "github_create_issue",
+            SCOPE_PUBLIC_REPO,
             &kc,
         )
         .await;
@@ -610,6 +659,26 @@ mod tests {
         let (repo, _token) = r.unwrap();
         assert_eq!(repo.owner, "octocat");
         assert_eq!(repo.repo, "hello-world");
+    }
+
+    /// v0.2.2: watch action passes the gate when the token has the
+    /// notifications scope alongside the existing read:user + public_repo.
+    #[tokio::test]
+    async fn authed_gate_passes_for_watch_with_notifications_scope() {
+        let state = build_state_with(SettingsLoadState::Loaded(Settings::default())).await;
+        let kc = MockKeychain::with_token_and_scopes(
+            "ghp_test",
+            &["read:user", "public_repo", "notifications"],
+        );
+        let r = inner_authed_gate_with_kc(
+            &state,
+            "https://github.com/octocat/hello-world",
+            "github_watch",
+            SCOPE_NOTIFICATIONS,
+            &kc,
+        )
+        .await;
+        assert!(r.is_ok(), "expected gate to pass, got {r:?}");
     }
 
     /// Non-github URL → InvalidArgument (NOT Ok(None) like
@@ -625,6 +694,7 @@ mod tests {
             &state,
             "https://example.com/foo/bar",
             "github_star",
+            SCOPE_PUBLIC_REPO,
             &kc,
         )
         .await;
@@ -652,6 +722,7 @@ mod tests {
             &state,
             "https://not-a-github-url-at-all",
             "github_star",
+            SCOPE_PUBLIC_REPO,
             &kc,
         )
         .await;

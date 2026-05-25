@@ -95,6 +95,129 @@ The **app-specific password** is a credential. It can be regenerated easily, but
 
 If you ever do commit it by accident: regenerate at appleid.apple.com immediately. The old password is invalidated on regenerate.
 
+## Updater keypair + manifest publishing (Phase 15)
+
+Starting with **v0.3.0**, brew-browser ships an in-app update mechanism built on `tauri-plugin-updater`. The plugin verifies every downloaded `.dmg` against a [minisign](https://jedisct1.github.io/minisign/) signature before it touches the user's `/Applications` directory. This section covers the one-time keypair setup (per maintainer machine) and the per-release manifest-publishing flow.
+
+**Important:** none of this applies to the dev loop. `npm run tauri dev` does not consult the updater plugin and does not need a keypair. The updater paths only fire in release builds with a published manifest.
+
+### One-time minisign keypair setup
+
+You only do this once per maintainer machine. The keypair lets your release builds sign the `.dmg` so that end users' brew-browser installations can verify the artifact came from you and not from anyone else who managed to drop a file at the manifest URL.
+
+1. **Install `tauri-cli`** if you don't already have it:
+   ```sh
+   cargo install tauri-cli --version "^2"
+   # or, much faster:
+   cargo binstall tauri-cli
+   ```
+
+2. **Generate the keypair:**
+   ```sh
+   tauri signer generate -w ~/.config/brew-browser/updater.key
+   ```
+
+   The command writes the **private** key to the path you gave it and prints the **public** key (a base64 blob) to stdout. Copy the public key — you'll need it in the next step.
+
+3. **Lock down the private key:**
+   ```sh
+   chmod 600 ~/.config/brew-browser/updater.key
+   ```
+
+   Same posture as `signing.env` — user-only readable, lives outside the repo. The `~/.config/brew-browser/` directory is a fine home for both files; it's already where the Apple notarization credentials live.
+
+4. **Embed the public key in source:**
+
+   Open `src-tauri/src/lib.rs` and set the `PUB_KEY` const to the public key from step 2:
+   ```rust
+   const PUB_KEY: &str = "untrusted comment: minisign public key …\nRWQ…";
+   ```
+
+   Public keys are public — committing them in source is fine and intentional. That's the entire point of asymmetric crypto: the half users need to verify your signature is exactly the half that has to be widely distributed. The matching private key is what mints valid signatures, and that one stays on your machine.
+
+5. **Back up the private key separately.** 1Password, an encrypted external drive, anywhere that isn't this machine's disk. Treat it the same way you treat your Developer ID certificate's private key.
+
+   **If you lose this key**, users on the auto-update path can no longer verify signatures from a new keypair. Recovery means: cut a new release that ships a hardcoded new `PUB_KEY`, push that release to GitHub Releases, then ask all existing users to manually re-download the `.dmg` from the releases page (since their installed copy will reject the new key). This is degraded UX, not catastrophic — but it's the kind of cleanup you'd rather not do. Back up the key.
+
+### Per-release manifest publishing flow
+
+Every release cuts a `.dmg` (via `./tools/build/sign-and-notarize.sh`) and then publishes an updater manifest so existing installations can discover the new version. The manifest is a small JSON file served from `https://brew-browser.zerologic.com/updater.json` (Caddy on umbp); end-user installs poll it on the configurable cadence (manual, weekly, or daily).
+
+1. **Cut the release build first.** Per the "Build it" section above:
+   ```sh
+   source ~/.config/brew-browser/signing.env
+   ./tools/build/sign-and-notarize.sh
+   ```
+   Produces `src-tauri/target/release/bundle/dmg/brew-browser_X.Y.Z_aarch64.dmg`, signed by Apple and notarized.
+
+2. **Generate the updater manifest** with the version you just built:
+   ```sh
+   tools/release/publish-manifest.sh 0.3.0
+   ```
+
+   The script:
+   - Locates the `.dmg` at the expected path (`src-tauri/target/release/bundle/dmg/brew-browser_<version>_aarch64.dmg`)
+   - Computes the `sha256` of the `.dmg`
+   - Signs the `.dmg` with minisign using `~/.config/brew-browser/updater.key`
+   - Emits `updater.json` in the repo root (or wherever the script is configured to write — check the script's `--help`) in the shape Tauri's plugin expects (see "Manifest format" below)
+   - Echoes the deploy command for you to run by hand
+
+3. **Deploy the manifest** to the umbp host. The script will print the exact rsync command; run it yourself so the deploy step stays a deliberate action:
+   ```sh
+   rsync -avz updater.json michael@umacbookpro:Sites/brew-browser/updater.json
+   ```
+
+4. **Verify the manifest is live:**
+   ```sh
+   curl -s https://brew-browser.zerologic.com/updater.json | jq
+   ```
+
+   Confirm the `version` field matches the one you just shipped and the `url` points at the GitHub Releases asset for that version. If `jq` complains, the manifest didn't deploy cleanly; re-run rsync.
+
+### Manifest format
+
+Tauri's updater plugin expects this shape. The script generates it for you — but it's worth knowing the layout so a future maintainer can hand-edit if the script breaks:
+
+```json
+{
+  "version": "0.3.0",
+  "notes": "See https://github.com/msitarzewski/brew-browser/releases/tag/v0.3.0",
+  "pub_date": "2026-05-24T18:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "<minisign signature, single-line base64>",
+      "url": "https://github.com/msitarzewski/brew-browser/releases/download/v0.3.0/brew-browser_0.3.0_aarch64.dmg",
+      "sha256": "<hex digest of the .dmg>"
+    }
+  }
+}
+```
+
+Notes on the fields:
+
+- **`version`** — semver string, no `v` prefix. The plugin compares this against the running binary's version and only prompts if it's strictly greater (downgrade attempts are rejected).
+- **`notes`** — short text. We point at the GitHub release page rather than inlining release notes; keeps the manifest small and lets us edit notes after publish without re-signing.
+- **`pub_date`** — RFC 3339 UTC timestamp. Tauri uses this for display only.
+- **`platforms.darwin-aarch64`** — Apple Silicon macOS. We don't ship Intel builds; if we ever do, add a `darwin-x86_64` sibling.
+- **`signature`** — the minisign signature over the `.dmg` bytes. Tauri's plugin verifies this against the `PUB_KEY` const baked into the binary; mismatch aborts the install with no on-disk side effects.
+- **`url`** — direct download URL for the `.dmg`. Constrained by the artifact-host allowlist in the plugin config (only `github.com` and `objects.githubusercontent.com` are accepted).
+- **`sha256`** — hex digest. The plugin checks this *first* (cheap) before invoking minisign (more expensive); a mismatch aborts before any signature math.
+
+### If you forget to publish the manifest
+
+Users on auto-check won't see the new version — the manifest still advertises the previous release, so the plugin reports "you're up to date." This is **degraded UX, not broken**: the new `.dmg` is still on the GitHub Releases page and users who go looking will find it. Catch it by running the `curl | jq` verification step above; if the deployed `version` doesn't match what you just shipped, re-run the publish script and rsync.
+
+### Two separate signing concerns
+
+The release flow now involves two independent cryptographic signatures, and it's worth being clear about which one does what:
+
+| Signature | Purpose | Key location | Verified by |
+|-----------|---------|--------------|-------------|
+| **Apple Developer ID + notarization** | Proves the `.dmg` was built by an Apple-registered developer (you) and passed Apple's malware scan | Login keychain + `signing.env` | macOS Gatekeeper at install time |
+| **Minisign signature** | Proves the `.dmg` came from your specific brew-browser maintainer keypair (not anyone else who could host a file at the manifest URL) | `~/.config/brew-browser/updater.key` | `tauri-plugin-updater` at install time, against the `PUB_KEY` in the running binary |
+
+Both are needed. Apple's signature alone doesn't help if someone with a Developer ID account compromises your manifest endpoint and serves a `.dmg` they signed themselves — minisign closes that gap. Minisign alone doesn't help with Gatekeeper warnings — Apple's notarization closes that. Skip either and your release is either visibly broken (Gatekeeper warning, no notarization) or invisibly broken (auto-update install fails, no minisign signature).
+
 ## GitHub OAuth App (one-time setup before release)
 
 brew-browser's GitHub integration uses the OAuth Device Flow (RFC 8628). The `client_id` is hardcoded in `src-tauri/src/github/auth.rs` and is **not a secret** — Device Flow client IDs are identifiers, not credentials (§3.1 of the RFC).

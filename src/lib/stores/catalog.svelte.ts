@@ -83,7 +83,7 @@ class CatalogStore {
         switch (e.code) {
           case "paranoid_mode_blocked":
             this.refreshError =
-              "Paranoid mode is on — catalog refresh is blocked. Disable it in Settings → Network.";
+              "Offline mode is on — catalog refresh is blocked. Disable it in Settings → Network.";
             break;
           case "brew_exit_non_zero":
             this.refreshError =

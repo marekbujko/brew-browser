@@ -25,6 +25,15 @@
       <div class="body">
         <div class="title">{t.title}</div>
         {#if t.body}<div class="sub">{t.body}</div>{/if}
+        {#if t.action}
+          <button
+            type="button"
+            class="action"
+            onclick={() => toast.invokeAction(t.id)}
+          >
+            {t.action.label}
+          </button>
+        {/if}
       </div>
       <button class="close" aria-label="Dismiss" onclick={() => toast.dismiss(t.id)}>
         <X size={14} />
@@ -78,6 +87,28 @@
     border-radius: var(--radius-sm);
   }
   .close:hover { color: var(--color-text-primary); background: var(--color-surface-sunken); }
+
+  /* Inline action button on a toast (e.g., "Re-authorize" on a
+     ScopeRequired error). Sits below the body text, tone-colored to
+     match the toast's left border so the affordance reads as paired
+     with the alert. */
+  .action {
+    margin-top: var(--space-2);
+    align-self: start;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-body-sm);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    transition: background-color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+  .tone-success .action { color: var(--color-success); }
+  .tone-info    .action { color: var(--color-info); }
+  .tone-warning .action { color: var(--color-warning); }
+  .tone-error   .action { color: var(--color-danger); }
+  .action:hover { background: color-mix(in oklch, currentColor 12%, transparent); }
 
   @keyframes slideIn {
     from { transform: translateY(8px); opacity: 0; }

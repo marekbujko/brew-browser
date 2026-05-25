@@ -22,6 +22,7 @@ use crate::commands::categories::CategoriesData;
 use crate::commands::disk_usage::CachedDiskUsage;
 use crate::commands::services::CachedServices;
 use crate::commands::settings::{self, SettingsLoadState};
+use crate::commands::updater::UpdaterState;
 use crate::enrichment::EnrichmentData;
 use crate::error::BrewError;
 use crate::trending::cache::TrendingCache;
@@ -125,6 +126,14 @@ pub struct AppState {
     /// `require_network` consults this on the first line of every
     /// network-touching command.
     pub settings: Arc<RwLock<SettingsLoadState>>,
+
+    /// Phase 15 — in-memory mirror of the latest update check + cached
+    /// `Available` payload. The auto-check scheduler updates this on
+    /// every wake, and `update_install` validates the caller-supplied
+    /// version arg against the cached entry to defend against UI
+    /// staleness. See `crate::commands::updater::UpdaterState` for the
+    /// shape and the rationale.
+    pub updater_state: Arc<RwLock<UpdaterState>>,
 }
 
 impl AppState {
@@ -206,6 +215,7 @@ impl AppState {
             catalog: RwLock::new(Arc::new(bundled)),
             catalog_refresh_in_flight: Arc::new(Mutex::new(())),
             settings: Arc::new(RwLock::new(settings_state)),
+            updater_state: crate::commands::updater::empty_state(),
         })
     }
 

@@ -512,3 +512,66 @@ Hotfix on top of v0.2.0 (`e04dbff`) that addresses two distinct issues users hit
 - `gitleaks`: 0 leaks (after allowlist; 2 false positives on the public client_id were the only initial hits)
 
 **Verdict: READY-FOR-SCRUTINY preserved.** See `memory-bank/security.md` §14 for the full breakdown.
+
+---
+
+## 2026-05-25 (v0.3.0 prep — Phase 15 + GitHub integration completion + issue #1 fix)
+
+### Big-picture summary
+
+Two coupled tracks landed in this session, both targeting v0.3.0:
+
+**Track A — Phase 15 (in-app updater + Offline Mode UI rename).** Implemented via a 4-agent parallel wave (Backend Architect + Frontend Developer × 2 + Technical Writer) + Lead bridging IPC. **+34 backend tests**, all `cargo check` / `cargo clippy` / `npm run check` clean. Then 2-agent review wave (Code Reviewer + Security Engineer) returned **NEEDS-WORK with 5 CRITICAL findings**: IPC wire-shape mismatch on Available, "Relaunch now" button re-runs install, manifest format (.dmg vs .app.tar.gz), missing error variants in frontend union, and `update_skip` silently revokes paranoid mode on Corrupt settings (Lead's bridging command introduced that one). All five well-scoped, ~2-3h fix-up. Tracked as task #41.
+
+**Track B — Issue #1 root cause + GitHub integration completion.** User reported toast cascade recurring after v0.2.1 ship. Spent ~6h tracing. Real root cause: a starredCache infinite-loop in PackageDetail (`isStarred` catch wrote "unknown" — same as the cache-miss sentinel — causing infinite refetches). Cascade fixed. Then surfaced **3 more bugs in a row**: scope parser was using `split_whitespace` (GitHub returns comma-separated), Star failed with ScopeRequired; Watch needs `notifications` scope (GitHub's docs explicitly require it), got HTTP 404; toast `$effect` pattern itself was structurally wrong per Svelte 5 docs (`$effect` is "an escape hatch", not a side-effect channel). All four fixed. Then added: per-action scope gate (parameterized `authed_gate`), actionable Re-authorize toast (new `Toast.action` type), Octocat status chip in title bar (real Octocat from Primer/Octicons, Lucide strips brand icons). +2 new backend tests (445 → 447). Tracked as tasks #14 and #15.
+
+### Shipped (uncommitted, lands in v0.3.0 commit)
+
+**Phase 15:**
+- `tauri-plugin-updater` integrated, scheduler, 8 backend tests
+- `UpdateIndicator.svelte` (title-bar pill) + `SettingsSectionUpdates.svelte` (Settings UI) + `updater.svelte.ts` store
+- "Paranoid Mode" → "Offline Mode" UI rename (internal `paranoid_mode` field stays for migration compat)
+- BUILD.md: minisign setup + manifest publishing flow
+- security.md §15 stub (to be filled post-fix-up)
+- New `tools/release/publish-manifest.sh`, `.gitleaks.toml` allowlist
+
+**GitHub fixes:**
+- `StarredOutcome` adds `"error"` variant (cache-loop killer)
+- Scope parser splits on commas + whitespace
+- `notifications` added to `GITHUB_OAUTH_SCOPES`
+- Per-action scope gate in `commands/github.rs`
+- Toast `$effect` removed from DeviceFlowModal; imperative call in `signIn()` poll loop
+- `Toast.action` type + `invokeAction(id)` + actionable rendering
+- `showActionFailureToast` helper in PackageDetail routes all 3 catch blocks
+- `GithubMarkIcon.svelte` (Primer/Octicons MIT)
+- `TitlebarControls` chip with green/amber/hidden states + eager `loadStatus()` on mount (v0.3.0+ follow-up to gate on localStorage flag)
+- "Powered by Claude Code in the terminal, running Opus 4.7 [1m]" attribution in 3 spots (already shipped in v0.2.1, mentioned here for completeness)
+
+**Memory bank:**
+- Two new task records: `tasks/2026-05/{14-issue-1-hunt-cache-loop.md, 15-github-integration-completion.md}`
+- `tasks/2026-05/README.md` index updated
+- `activeContext.md` rewritten
+
+### Tests & lint (final, this session)
+
+- `cargo test`: **447 passed**, 0 failed, 6 ignored (411 → 445 from Phase 15 → 447 from per-action scope tests)
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `cargo check`: clean
+- `npm run check`: 0 errors, 3 pre-existing warnings (SettingsSectionGitHub unused-CSS, tsconfig-node-types)
+- `npm run build`: clean
+- All diagnostic instrumentation reverted (no `[diag]` console.log / `console.trace` left in code)
+
+### What's blocking v0.3.0 ship
+
+1. **Phase 15 fix-up pass** (task #41) — 5 CRITICAL findings, ~2-3h
+2. Optional: **Expand GitHub package resolution** (task #46) — walks `urls.stable.url` / `head` / cask `url` fields beyond `homepage`, ~1-2h
+3. Version bump → commit → tag → build → ship → memory bank refresh
+
+### Web research consulted
+
+- [Svelte 5 `$effect` docs](https://svelte.dev/docs/svelte/$effect) — "$effect is an escape hatch"
+- [`effect_update_depth_exceeded` runtime errors](https://svelte.dev/docs/svelte/runtime-errors)
+- [Svelte issue #14697](https://github.com/sveltejs/svelte/issues/14697) — community guidance on not updating state in effects
+- [GitHub REST API watching](https://docs.github.com/en/rest/activity/watching) — endpoint contract
+- [GitHub OAuth scopes docs](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps) — notifications scope grants watch/unwatch
+- [GitHub community discussion #52522](https://github.com/orgs/community/discussions/52522) — 404 = often insufficient permissions
