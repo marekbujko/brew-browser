@@ -117,6 +117,7 @@ pub fn run() {
             brew_install,
             brew_uninstall,
             brew_upgrade,
+            brew_upgrade_many,
             brew_update,
             cancel_job,
             brewfile_dump,

@@ -25,6 +25,7 @@
   import { github } from "$lib/stores/github.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { brewUpgrade, diskUsage, diskUsageClearCache, openInFinder } from "$lib/api";
+  import UpgradeModal from "./UpgradeModal.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { resolveCategoryIcon } from "$lib/util/categoryIcon";
   import { brewErrorMessage, isBrewError, type DiskUsageReport } from "$lib/types";
@@ -315,6 +316,7 @@
   );
 
   let upgradeAllRunning = $state(false);
+  let upgradeModalOpen = $state(false);
 
   async function upgradeAll() {
     if (upgradeAllRunning) return;
@@ -443,10 +445,21 @@
               <h2>Updates available</h2>
               <span class="card-title-chevron" aria-hidden="true">→</span>
             </button>
-            <Button variant="primary" size="sm" onclick={upgradeAll} disabled={upgradeAllRunning}>
-              {#snippet icon()}<ArrowUpCircle size={14} />{/snippet}
-              {upgradeAllRunning ? "Upgrading…" : `Upgrade all (${counts.outdated})`}
-            </Button>
+            <div class="updates-actions">
+              <Button
+                variant="secondary"
+                size="sm"
+                onclick={() => (upgradeModalOpen = true)}
+                disabled={upgradeAllRunning}
+                title="Pick which packages to upgrade"
+              >
+                Choose…
+              </Button>
+              <Button variant="primary" size="sm" onclick={upgradeAll} disabled={upgradeAllRunning}>
+                {#snippet icon()}<ArrowUpCircle size={14} />{/snippet}
+                {upgradeAllRunning ? "Upgrading…" : `Upgrade all (${counts.outdated})`}
+              </Button>
+            </div>
           </div>
           <ul class="outdated-list">
             {#each outdatedPreview as p (p.fullName + p.kind)}
@@ -665,6 +678,11 @@
   </div>
 </section>
 
+<UpgradeModal
+  open={upgradeModalOpen}
+  onClose={() => (upgradeModalOpen = false)}
+/>
+
 <style>
   .dashboard { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 
@@ -796,6 +814,13 @@
     font-size: var(--text-h3, 1rem);
     font-weight: var(--fw-semibold);
     margin: 0;
+  }
+  /* Right-side cluster for the Updates card's two upgrade actions
+     ("Choose…" + "Upgrade all"). Tight gap keeps them paired visually. */
+  .updates-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   .card-title-link {
     display: inline-flex;

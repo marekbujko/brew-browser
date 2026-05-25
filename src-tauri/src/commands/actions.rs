@@ -120,6 +120,47 @@ pub async fn brew_upgrade(
     result
 }
 
+/// Upgrade a specific *set* of packages in one `brew upgrade <a> <b> ...`
+/// invocation. Used by the Dashboard's curated "Upgrade…" modal where
+/// the user has checked the subset they want upgraded (vs the
+/// `brew_upgrade(None)` "upgrade everything" path).
+///
+/// Empty list → InvalidArgument (the caller should use `brew_upgrade(None)`
+/// instead). Validates every name through the same allowlist regex as
+/// `brew_install` to prevent shell-metacharacter injection.
+#[tauri::command]
+pub async fn brew_upgrade_many(
+    names: Vec<String>,
+    on_event: Channel<BrewStreamEvent>,
+    state: State<'_, AppState>,
+) -> Result<JobResult, BrewError> {
+    if names.is_empty() {
+        return Err(BrewError::InvalidArgument {
+            message: "brew_upgrade_many requires at least one package name; \
+                      use brew_upgrade(None) to upgrade everything"
+                .to_string(),
+        });
+    }
+    for n in &names {
+        validate_package_name(n)?;
+    }
+    let path = state.require_brew_path().await?;
+
+    let mut args = vec!["upgrade".to_string()];
+    args.extend(names.iter().cloned());
+    let display = format!("brew upgrade {}", names.join(" "));
+    let jobs = state.jobs.clone();
+    let lock = state.brew_write_lock.clone();
+
+    let _guard = lock.lock_owned().await;
+    let result = run_brew_streaming(&path, args, display, on_event, jobs).await;
+
+    if result.is_ok() {
+        state.invalidate_caches().await;
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn brew_update(
     on_event: Channel<BrewStreamEvent>,

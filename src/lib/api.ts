@@ -139,6 +139,24 @@ export function brewUpgrade(
   });
 }
 
+/**
+ * Upgrade a curated subset of packages in a single
+ * `brew upgrade <a> <b> ...` invocation.
+ *
+ * Backed by the `brew_upgrade_many` IPC. Empty `names` is rejected
+ * server-side with `invalid_argument` — use `brewUpgrade(null)` for
+ * the "upgrade everything" path instead.
+ */
+export function brewUpgradeMany(
+  names: string[],
+  onEvent: (evt: BrewStreamEvent) => void,
+): Promise<JobResult> {
+  return invoke<JobResult>("brew_upgrade_many", {
+    names,
+    onEvent: makeChannel(onEvent),
+  });
+}
+
 export function brewUpdate(
   onEvent: (evt: BrewStreamEvent) => void,
 ): Promise<JobResult> {
