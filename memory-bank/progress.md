@@ -575,3 +575,46 @@ Two coupled tracks landed in this session, both targeting v0.3.0:
 - [GitHub REST API watching](https://docs.github.com/en/rest/activity/watching) — endpoint contract
 - [GitHub OAuth scopes docs](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps) — notifications scope grants watch/unwatch
 - [GitHub community discussion #52522](https://github.com/orgs/community/discussions/52522) — 404 = often insufficient permissions
+
+## 2026-05-25 (v0.3.0 SHIPPED)
+
+### Done
+
+- ✅ **Phase 15 fix-up** (task #16) — all 5 CRITICAL findings resolved + 1 IMPORTANT (`cached_available` clear post-install) folded in. Commit `1bfe21f`. +3 backend tests.
+- ✅ **GitHub coverage expansion** (task #17) — `Package::github_homepage` walks homepage → urls.stable.url → urls.head.url (formula) or homepage → url (cask). Backend pre-resolves canonical github.com/<o>/<r>. Frontend Dashboard + PackageDetail use the pre-resolved field. Commit `820c1f0`. +23 backend tests (450 → 473).
+- ✅ **v0.3.0 release** (commit `d7c2bca`, tag `v0.3.0`):
+  - Generated real minisign keypair at `~/.config/brew-browser/updater.key` (second attempt — first password mismatch traced to bash `$`/`!` expansion in double-quoted env vars; switch to single quotes resolved it). Pubkey embedded in `lib.rs` + `tauri.conf.json`.
+  - Version bumped `0.2.1 → 0.3.0` (`Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `landing/index.html`).
+  - Added `createUpdaterArtifacts: true` to `tauri.conf.json` bundle config — Tauri 2 needs this flag explicitly or the `.app.tar.gz` updater target silently skips.
+  - `sign-and-notarize.sh` pre-flights both Apple + Tauri signing env vars, bridges `_PATH` → inline contents (Tauri 2 reads `TAURI_SIGNING_PRIVATE_KEY` only, despite signer-generate output claiming `_PATH` works).
+  - `publish-manifest.sh` rewritten to consume `.app.tar.gz.sig` from the bundler (not re-sign via raw minisign — that format wouldn't validate against the embedded Tauri-format pubkey).
+  - Build pipeline shipped: signed + notarized `.dmg` + signed `.app.tar.gz` + `.app.tar.gz.sig`. End-to-end verified via `spctl assess` + `stapler validate`.
+  - GH release created with both artifacts: <https://github.com/msitarzewski/brew-browser/releases/tag/v0.3.0>. Renamed `.app.tar.gz` asset via API to match the versioned manifest URL (`#newname` syntax on `gh release create` only updated label).
+  - Manifest rsync'd to `umacbookpro:Sites/brew-browser/updater.json`. Live at <https://brew-browser.zerologic.com/updater.json>.
+  - Issue #1 auto-closed via `Closes #1` keyword in the release commit. Posted a thanks/follow-up comment to @heyjawrsh.
+  - README "Status" section updated to lead with v0.3.0.
+  - `docs/release-notes/0.3.0.md` (new convention — release notes live under docs/, not repo root).
+
+### Tests & lint at release time
+
+- `cargo test`: **473 passed**, 0 failed, 6 ignored
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `npm run check`: 0 errors, 3 pre-existing warnings
+- `npm run build`: clean
+
+### Release-pipeline lessons learned (for v0.4.0 and beyond)
+
+1. **`TAURI_SIGNING_PRIVATE_KEY` requires inline contents.** The path variant doesn't work despite the signer-generate output claiming it does (Tauri 2 CLI as of 2026-05). Build script now bridges automatically; alternative is `export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.config/brew-browser/updater.key)"` in signing.env.
+2. **Password env vars need single quotes** in signing.env when the password contains `$`, `!`, backticks, or anything else bash expands inside double quotes. Use `'...'` literal strings.
+3. **`createUpdaterArtifacts: true`** is required in `tauri.conf.json` for Tauri 2 to emit `.app.tar.gz` alongside `.dmg`. Default is off; without it the updater target silently skips.
+4. **`.app.tar.gz.sig` is Tauri-format, not raw minisign-format** (`.minisig`). The plugin's verification reads the .sig contents as a single string. Don't re-sign via minisign CLI — the format wouldn't validate.
+5. **`gh release create asset.ext#new-name` only sets the label**, not the filename. Use `gh api -X PATCH /repos/.../releases/assets/<id> -f name=<new-name>` to actually rename the downloadable asset.
+6. **CDN cache settles within ~10s** after rename. Initial 404 on renamed asset is benign; retry after a brief pause.
+
+### Outstanding (v0.3.x or v0.4.0)
+
+- Localstorage flag gating `TitlebarControls.onMount` eager `loadStatus()` — preserve v0.2.1's "zero Keychain prompt unless you sign in" promise for users who never sign in. ~15min.
+- `cancelSignin` timer leak edge case (rare, requires user clicking Cancel within the 1500ms post-approve window). ~10min.
+- Startup placeholder-pubkey guard (5-line panic-on-PLACEHOLDER in release builds) — would have caught the v0.3.0 cycle of "key generated but pubkey still placeholder."
+- Persist `last_checked_at` to disk so the auto-updater honours the 24h floor across launches (currently in-memory only, effectively never auto-fires for typical morning/evening usage patterns).
+- Manifest URL allowlist enforcement — documented in `security.md` §15 but not implementable through `tauri-plugin-updater 2.10.1` (no pre-fetch hook).

@@ -1,81 +1,77 @@
 # NEXT-SESSION handoff — read this first
 
-**Date written:** 2026-05-25 (just before `/compact`, end of marathon GitHub-debug session)
+**Date written:** 2026-05-25 (v0.3.0 shipped)
 **Session lead:** Claude Opus 4.7 [1m] (Claude Code in the terminal) with Michael
 
-Read this first, then `activeContext.md`, then the latest entries in `progress.md`, then specific `tasks/2026-05/{14, 15}.md` for full detail on what just happened.
+Read this first, then `activeContext.md`, then the latest entries in `progress.md`, then specific `tasks/2026-05/*.md` for full detail on what just happened.
 
 ---
 
-## Current state at compact
+## Current state
 
-- **v0.2.1** is the latest GitHub release (signed/notarized .dmg live)
-- **v0.3.0 prep is uncommitted** in the working tree — ~30 modified files
-- **9 stars on GitHub.** Joshua Butner ([@heyjawrsh](https://github.com/heyjawrsh)) filed [issue #1](https://github.com/msitarzewski/brew-browser/issues/1) — ROOT-CAUSED + FIXED this session; ships in v0.3.0
-- **LinkedIn announcement** at <https://www.linkedin.com/in/msitarzewski/recent-activity/all/> — 1,496 impressions in first 10h, 5 new followers, real traction
-- **HN post buried** at 1 point; not regenerating
+- **v0.3.0** is live. Signed + notarized + stapled `.dmg` AND signed `.app.tar.gz` (the auto-updater artifact) both on the GH release: <https://github.com/msitarzewski/brew-browser/releases/tag/v0.3.0>.
+- **Manifest live** at <https://brew-browser.zerologic.com/updater.json>. Served by Caddy on umbp. Auto-updater path validated end-to-end with real minisign keypair.
+- **Issue #1** (Joshua Butner / @heyjawrsh) closed. Posted a thanks comment.
+- **Stars:** 9 last check (HN buried, LinkedIn announcement still circulating).
+- **Working tree clean.** Three commits on `main` this two-session arc: `1bfe21f` (Phase 15 fix-up), `820c1f0` (GitHub coverage expansion), `d7c2bca` (v0.3.0 release).
 
-## What's in the working tree
+## What landed in v0.3.0
 
-### Phase 15 — In-app updater + Offline Mode UI rename
-**Status: implementation complete, NEEDS-WORK from review (5 CRITICALs)**
+See `docs/release-notes/0.3.0.md` for the user-facing version. The technical narrative:
 
-4-agent parallel implementation wave returned clean (+34 backend tests). 2-agent review wave returned **NEEDS-WORK**. The 5 CRITICAL findings (see task #41 + `tasks/2026-05/13-phase-15-updater-and-offline-mode-rename.md` for details):
+- Phase 15 (in-app updater + Offline Mode rename) — 4-agent parallel implementation + 5-CRITICAL fix-up + signed + shipped.
+- GitHub coverage expansion — `Package::github_homepage` walks homepage → urls.stable.url → urls.head.url (formula) or homepage → url (cask). Frontend uses pre-resolved field for all GitHub feature routing.
+- Issue #1 fixes — cache loop in `PackageDetail` + structural misuse of `$effect` for one-shot side effects, plus the per-action scope gate + actionable Re-authorize toast + GitHub Octocat status chip. All in the v0.3.0 ship.
+- Backend test count: 411 → 473 over the v0.3.0 cycle.
 
-1. **IPC wire-shape mismatch on `UpdateCheckOutcome::Available`** — backend sends flat `{kind, version, currentVersion, notes, pubDate, skipped}`; frontend reads `outcome.info.{version, notesUrl, sha256}`. The frontend reads `undefined` for everything. Fix: flatten the frontend type to match the backend serde output, drop the invented `notesUrl`/`sha256` sub-fields.
-2. **"Relaunch now" button re-runs install** — there's no `app.restart()` IPC; clicking the button calls `updater.install(version)` again. Infinite re-install loop. Fix: add `update_relaunch()` IPC that calls `tauri::AppHandle::restart()`; rewire button.
-3. **Manifest artifact format** — plugin expects `.app.tar.gz` (gzipped tar of `.app`); `tools/release/publish-manifest.sh` + `BUILD.md` say `.dmg`. Every install attempt fails with "invalid gzip" error. Fix: emit `.app.tar.gz` alongside `.dmg`; update manifest URL.
-4. **Missing error variants in frontend union** — backend's `HashMismatch`, `SignatureVerificationFailed`, `DowngradeRejected` don't exist in `BrewErrorPayload`. `brewErrorMessage(e)` returns `undefined` → error suppressed entirely. Fix: extend `BrewErrorPayload` + add `brewErrorMessage` cases.
-5. **`update_skip` revokes paranoid mode on Corrupt settings** ⚠️ — Lead's bridging command writes `Settings::default()` (paranoid_mode = false) when settings are Corrupt. Clicking × on an update indicator silently disables the network kill switch. Fix: refuse skip on Corrupt OR keep skip in-memory only.
+## Release-pipeline lessons (in case you ship v0.4.0)
 
-Estimate: **2-3 hours**. All five are well-scoped, mechanical. Code Reviewer + Security Engineer both signed off on the architecture; only the integration seams need work.
+Six things bit us during the v0.3.0 release that won't on the next one:
 
-### GitHub integration completion (4 cascading bug fixes + 3 new features)
+1. **`TAURI_SIGNING_PRIVATE_KEY` requires inline contents.** The path variant (`_PATH`) doesn't work in Tauri 2 CLI as of 2026-05 despite the signer-generate output claiming it does. `tools/build/sign-and-notarize.sh` now bridges automatically: if only `_PATH` is set, it reads the file and exports the contents into `TAURI_SIGNING_PRIVATE_KEY`.
+2. **Password env vars need single quotes** in `signing.env` when the password contains `$`, `!`, backticks, or anything else bash expands inside double quotes. Use `'...'` literal strings.
+3. **`createUpdaterArtifacts: true`** is required in `tauri.conf.json` (`bundle` section) for Tauri 2 to emit `.app.tar.gz` alongside `.dmg`. Default is off; without it the updater target silently skips.
+4. **`.app.tar.gz.sig` is Tauri-format, not raw minisign-format** (`.minisig`). The plugin reads the .sig contents as a single string and validates against the embedded pubkey. Don't re-sign via the `minisign` CLI — that produces the wrong format. `publish-manifest.sh` now reads the bundler-produced .sig directly.
+5. **`gh release create asset.ext#new-name` only sets the label**, not the filename. To rename the downloadable asset, use the API:
+   ```sh
+   gh api -X PATCH /repos/<owner>/<repo>/releases/assets/<id> -f name=<new-name>
+   ```
+6. **CDN cache settles within ~10s** after rename. Initial 404 on renamed asset is benign; retry after a pause.
 
-Six hours of debug across issue #1. The story (see task #14 + #15 for full detail):
-
-1. **Cache loop fix** — `PackageDetail.svelte`'s `isStarred` effect overloaded `"unknown"` as both "haven't fetched yet" AND "fetched and failed." On failure → cache write → effect re-run → refetch → failure. Infinite IPC storm. Fixed with `"error"` variant in `StarredOutcome`.
-2. **Toast `$effect` → imperative refactor** — even after cache fix, users could hit `effect_update_depth_exceeded`. Per Svelte 5 docs, `$effect` is "an escape hatch" not "a side-effect channel." Moved `toast.success` from `$effect` to imperative call in `signIn()` poll loop. `SigninState.approved` now carries `username` so the toast text reads from signinState (one dep, no hidden second read).
-3. **Scope parser** — GitHub returns OAuth `scope` field comma-separated, not space-separated. `split_whitespace()` → `split(comma + whitespace)`.
-4. **Watch scope** — `PUT /repos/{o}/{r}/subscription` requires `notifications`, not `public_repo`. Added to `GITHUB_OAUTH_SCOPES`. GitHub returns 404 as the privacy-mask for "missing scope."
-
-Then added:
-- **Per-action scope gate** — `authed_gate(required_scope)`. star/issue → `public_repo`, watch/unwatch → `notifications`. +2 backend tests pin behavior.
-- **Actionable Re-authorize toast** — `Toast.action: { label, onClick }`. On `scope_required`, toast offers "Re-authorize" button → calls `signIn()` (GitHub shows scope diff only; no sign-out needed).
-- **Octocat status chip in title bar** — real Octocat from Primer/Octicons (MIT-licensed; Lucide strips brand icons). Green/amber/hidden. Click → Settings → GitHub. Eager `loadStatus()` in `TitlebarControls.onMount` makes it work; v0.3.0+ follow-up to gate on localStorage flag.
-
-End-to-end verified by user.
-
-## Critical context for any release
+## Critical context for any future release
 
 - **Apple signing env** at `~/.config/brew-browser/signing.env` (chmod 600, outside repo) — valid + live
-- **Anthropic API key** in `tools/categorize/.env` — valid + live
+- **Minisign private key** at `~/.config/brew-browser/updater.key` (chmod 600, outside repo) — valid, single-password-protected. Public counterpart at `.key.pub`. Embedded pubkey in `lib.rs` + `tauri.conf.json` matches.
+  - ⚠️ **If you lose this key**, users on the auto-update path can no longer verify a new release's signature against the v0.3.0+ embedded pubkey. Recovery means cutting a release with a new embedded pubkey and asking existing users to manually re-download from the releases page. Back it up.
+- **Anthropic API key** in `tools/categorize/.env` (gitignored) — valid + live
 - **GitHub OAuth client_id** (`Ov23liJZKbvrSBuiOPkT`) — public per RFC 8628 §3.1
-- **GitHub OAuth scope list** in `src-tauri/src/github/auth.rs:96` — now `["read:user", "public_repo", "notifications"]`. Existing v0.2.1 users with 2-scope tokens will hit the actionable Re-authorize toast and be guided through an incremental scope grant.
-- **Updater minisign pubkey** — still PLACEHOLDER in `tauri.conf.json` + `src-tauri/src/lib.rs`. Real key needs `tauri signer generate -w ~/.config/brew-browser/updater.key` per BUILD.md BEFORE v0.3.0 ships. Without it, every install attempt fails signature verification (fails closed, but visible to user).
+- **GitHub OAuth scope list** in `src-tauri/src/github/auth.rs:96` — `["read:user", "public_repo", "notifications"]`. v0.2.1 users with 2-scope tokens hit the actionable Re-authorize toast on Watch attempts and are guided through an incremental scope grant.
 
-## What's queued for the next session (priority order)
+## What's queued for next session (priority order)
 
-### 1. Phase 15 fix-up pass (task #41) — BLOCKS v0.3.0 SHIP
-~2-3 hours, all 5 CRITICALs listed above. After fix-up: Code Reviewer + Security Engineer Wave 3 re-review.
+### 1. Optional polish for v0.3.x (small wins)
 
-### 2. v0.3.0 release
-- Generate real minisign keypair: `tauri signer generate -w ~/.config/brew-browser/updater.key`
-- Replace placeholder pubkey in `src-tauri/src/lib.rs` + `tauri.conf.json`
-- Version bump in `src-tauri/Cargo.toml` + `tauri.conf.json` + `landing/index.html` softwareVersion: `0.2.1` → `0.3.0`
-- README "Status" section updated to reflect v0.3.0
-- Memory bank refresh (activeContext, progress, NEXT-SESSION)
-- Landing page deploys via `rsync` to `umacbookpro:Sites/brew-browser/`
-- `npm run tauri build` with signing env sourced → signed + notarized .dmg
-- `tools/release/publish-manifest.sh 0.3.0` to emit + deploy `updater.json` (after Phase 15 fix-up sorts the .app.tar.gz format)
-- `git tag v0.3.0`, push, `gh release create v0.3.0 --notes-file <notes>` with the .dmg attached
-- Comment on issue #1 with "fixed in v0.3.0" + close
+- **Localstorage flag for eager `loadStatus()`** — gate `TitlebarControls.onMount` on `localStorage["brew-browser:has-signed-in"]` so users who never sign in see zero Keychain prompts. Set on signIn success; clear on signOut. ~15min.
+- **`cancelSignin` timer leak** — track the `setTimeout(cancelSignin, 1500)` timer id in `signIn()` and clear on `cancelSignin()`. ~10min.
+- **Startup placeholder-pubkey guard** — panic-in-release-build if `UPDATER_PUBKEY.contains("PLACEHOLDER")`. Catches the next maintainer skipping the pubkey-replacement step. ~5min.
+- **Persist `last_checked_at` to disk** so the auto-updater 24h floor honours typical "open in morning, close at night" usage patterns. The scheduler currently uses in-memory state only. ~30min.
 
-### 3. Optional / nice-to-have for v0.3.0
+### 2. v0.4.0 ideas (from the user's running ideas list)
 
-- **Expand GitHub package resolution** (task #46) — walk `urls.stable.url` / `head` / cask `url` beyond `homepage`. Roughly doubles the "X of Y with GitHub homepages" coverage on the Dashboard's personal-stats card. ~1-2h.
-- **Localstorage flag for eager `loadStatus()`** — gate the eager call in `TitlebarControls.onMount` on `localStorage["brew-browser:has-signed-in"]` so users who never sign in see zero Keychain prompts. Set the flag on `signIn` success; clear on `signOut`. ~15min.
-- **`cancelSignin` timer leak edge case** — imperative `setTimeout(cancelSignin, 1500)` in `signIn()` doesn't get cleared if user clicks Cancel before 1500ms. Old timer fires + sets state to idle even during a new signin. Edge case (unusual usage); track the timer id and clear on `cancelSignin()`. ~10min.
+See `memory-bank/ideas.md` for the full backlog. Top candidates:
+- Recipes (multi-package install bundles with names)
+- Discover-UI surface improvements
+- macOS Liquid Glass / further NSVisualEffectView treatments
+- Octocat chip tooltip differentiation ("missing notifications scope" vs "missing public_repo" — currently both render amber with same tooltip)
+
+### 3. v0.3.x point release if Phase 15 issues surface in the wild
+
+The in-app updater is fresh. Possible early-feedback issues:
+- Slow networks: install progress feedback (currently no Channel-based progress events)
+- Multi-user macOS: keychain ACL might re-prompt across users
+- Non-standard install paths (custom `/Applications`): unhandled
+
+Watch for issues from v0.3.0 users; have a v0.3.1 hotfix flow ready.
 
 ## Credentials / paths reference
 
@@ -83,13 +79,15 @@ End-to-end verified by user.
 |------|-------|
 | Repo on disk | `/Users/michael/Clean/brew-browser/` |
 | GitHub repo | `github.com/msitarzewski/brew-browser` |
-| Anthropic API key | `tools/categorize/.env` (cascade-shared by enrich) |
-| Apple signing env | `~/.config/brew-browser/signing.env` (chmod 600) |
-| Updater minisign key (target — generate before v0.3.0) | `~/.config/brew-browser/updater.key` |
+| Anthropic API key | `tools/categorize/.env` |
+| Apple signing env | `~/.config/brew-browser/signing.env` (chmod 600) — now also contains `TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` |
+| Updater minisign key | `~/.config/brew-browser/updater.key` (chmod 600) — keep secret + back up |
+| Updater minisign pubkey | `~/.config/brew-browser/updater.key.pub` (matches embedded `UPDATER_PUBKEY` in `lib.rs`) |
 | Landing source | `landing/` |
 | Landing deploy | `michael@umacbookpro:Sites/brew-browser/` |
+| Updater manifest | `dist/updater.json` (gitignored, emitted by `publish-manifest.sh`) → rsynced to `umacbookpro:Sites/brew-browser/updater.json` |
 | umbp Tailnet IP / hostname | `100.98.187.7` / `umacbookpro` |
-| Catalog data | `src-tauri/data/catalog/{formula,cask}.json.gz` (~6.1 MiB) + `manifest.json` |
+| Catalog data | `src-tauri/data/catalog/{formula,cask}.json.gz` + `manifest.json` |
 | Enrichment data | `src-tauri/data/enrichment.json.gz` (15,725 Tier A entries) |
 | Catalog refresh | `python tools/catalog/fetch.py` |
 | Enrichment refresh | `tools/categorize/.venv/bin/python3 tools/enrich/enrich.py --tier-a` |
@@ -97,39 +95,22 @@ End-to-end verified by user.
 | Keychain | service `dev.openbrew.browser`, accounts `github_access_token` + `_scopes` + `github_access_token_scopes` |
 | Icon source | `docs/icon/brew-browser.svg` (full-bleed square, Tahoe-clean) |
 | Icon regen | `npm run tauri icon docs/icon/brew-browser.svg` |
-| Memory bank task records | `memory-bank/tasks/2026-05/*.md` (15 + README + deferred) |
-| Memory bank phase plans | `memory-bank/phases/{phase12,phase13}-plan.md` (shipped); `memory-bank/phase15-plan.md` (in-flight, top level) |
-| Memory bank scan artifacts | `memory-bank/scans/2026-05-23/*` (initial pre-release tool battery) |
+| Release notes | `docs/release-notes/<version>.md` (convention started in v0.3.0) |
+| Memory bank task records | `memory-bank/tasks/2026-05/*.md` (17 + README + deferred) |
+| Memory bank phase plans | `memory-bank/phases/{phase12,phase13}-plan.md` (shipped); `memory-bank/phase15-plan.md` (top level, shipped) |
 
-## Notes from this session that matter for v0.3.0
+## Notes from the v0.3.0 release session
 
-- **6-hour debug into issue #1** ended in 4 fixes + 3 new features. The recovery story is genuinely instructive. The cache-loop was hammering Svelte's scheduler, causing the toast effect to look like the bug. The actual structural problem was using `$effect` for a one-shot side effect — Svelte 5's docs explicitly call out that pattern as wrong.
-- **`grep_for_diag_must_be_clean`** — all `[diag]` / `console.trace` instrumentation was reverted at end of session. Verified `grep -rn "diag\|console.trace" src/lib/` returns nothing. Backend `_setSignin` wrapper kept (clean, no logs — useful for future invariants).
-- **`AGENTS.md` and `CLAUDE.md`** at repo root are intentional (user's AI-workflow guide). Untracked. Should be committed in the v0.3.0 commit since the user said to leave them. CLAUDE.md is a symlink to AGENTS.md.
-- **Tool classifier had a transient outage** near end of session — `npm run tauri dev` couldn't be launched via Bash for ~10 minutes. User ran it themselves. Worked fine via the user's terminal. (Anthropic-side outage on the auto-mode safety check; resolved by itself.)
-- **Web research is well-cited** in the task notes — every architectural decision (especially the `$effect` → imperative move) has the official Svelte 5 docs link backing it.
-- **No agent stamps in `agentLog.md` this session** — the convention is dormant. Either re-enable in future agent prompts or drop the protocol item from `toc.md`. Not a priority.
-
-## Open questions worth thinking about for v0.3.0
-
-1. Should Phase 15's manifest sha256 verification path (currently deferred to v0.3.1 per Backend Architect's deviation note) move to "do before v0.3.0 ships"? It's a real defense-in-depth gap.
-2. Octocat chip needs to differentiate **"signed-in but token is from v0.2.1 era (missing notifications)"** from **"signed-in but somehow lost public_repo too"**. Right now both = amber with same tooltip. v0.3.0 follow-up to show the specific missing scope in the tooltip.
-3. README's "Status" section currently says v0.2.1 — make sure to refresh as part of the v0.3.0 commit.
+- **First release with a working auto-updater path.** Validated end-to-end with the real minisign keypair. Future releases follow `tools/build/sign-and-notarize.sh` → `tools/release/publish-manifest.sh 0.X.0` → `gh release create v0.X.0 --notes-file docs/release-notes/0.X.0.md` → rsync manifest → `gh api PATCH /releases/assets/.../name`.
+- **Release notes live under `docs/release-notes/<version>.md`** going forward, not at repo root. Per user request mid-release.
+- **`gh release create #newname` syntax does NOT rename the asset.** Bit us during the v0.3.0 release; the rename was a post-hoc API PATCH. Document this in the maintainer-side BUILD.md for v0.4.0 prep.
+- **Memory bank refresh** is the final step of any release — commit + push the v0.3.0 release commit, THEN refresh activeContext + progress + NEXT-SESSION as a separate follow-up commit. Keeps the release commit narrative clean.
 
 ## What is NOT a problem (calling out so next-session-Claude doesn't re-investigate)
 
-- ✅ Toast cascade — FIXED
-- ✅ Star action — WORKS
-- ✅ Watch action — WORKS for users with `notifications` scope
-- ✅ Scope parser — FIXED (comma + whitespace split)
-- ✅ GitHub OAuth Device Flow — works as designed
-- ✅ Per-action scope gating — wired
-- ✅ Re-authorize toast button — wired (not visually verified end-to-end because user's token already has notifications, but architecture is sound)
-- ✅ Octocat status chip — works in the dev build
-- ✅ Build / lint / test — all clean (447 backend tests pass, npm clean, clippy clean)
-
-## What IS a problem (don't forget)
-
-- ⚠️ Phase 15 has 5 CRITICAL findings still pending (task #41)
-- ⚠️ Updater minisign pubkey is still placeholder
-- ⚠️ Eager `loadStatus()` re-introduces v0.2.1 Keychain prompt (follow-up: localStorage flag)
+- ✅ Auto-updater path — fully working v0.3.0 → v0.3.x
+- ✅ Manifest serving — Caddy on umbp, 200 with correct cache headers
+- ✅ Toast cascade / Star / Watch / File-issue / Sign-in flow — all clean
+- ✅ Build pipeline — `tools/build/sign-and-notarize.sh` handles all env-var quirks
+- ✅ Tests + clippy + check + build — all green at 473 backend tests
+- ✅ Pubkey + key — generated, matched, embedded, backed up (by you, hopefully)
