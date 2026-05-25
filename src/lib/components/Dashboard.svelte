@@ -24,7 +24,7 @@
   import { activity } from "$lib/stores/activity.svelte";
   import { github } from "$lib/stores/github.svelte";
   import { settings } from "$lib/stores/settings.svelte";
-  import { brewUpgrade, diskUsage, diskUsageClearCache, openInFinder } from "$lib/api";
+  import { brewUpdate, brewUpgrade, diskUsage, diskUsageClearCache, openInFinder } from "$lib/api";
   import UpgradeModal from "./UpgradeModal.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { resolveCategoryIcon } from "$lib/util/categoryIcon";
@@ -67,34 +67,73 @@
   });
 
   // ────────────────────────────────────────────────────────────────
-  // Phase 12a — catalog refresh handler
+  // Refresh handler — full three-step sync:
   //
-  // Refresh writes a fresh `formula.json` + `cask.json` to the user-data
-  // directory and swaps the active catalog, AND force-reloads the
-  // installed package list (which carries the `outdated` flag the
-  // Dashboard's Updates card + Library's Outdated filter both read).
+  //   1. `brew update` (git-fetch on every tap in $HOMEBREW_PREFIX/
+  //      Library/Taps/) — makes brew itself aware of new upstream
+  //      versions. Streams to the Activity drawer so the user can see
+  //      what brew is doing (typical output: "Already up-to-date" or
+  //      "Updated 2 taps: homebrew/core, homebrew/cask").
+  //   2. Catalog refresh — writes a fresh formula.json + cask.json to
+  //      ~/Library/Application Support/brew-browser/catalog/ for our
+  //      own Discover / Library / Search views. Doesn't touch brew.
+  //   3. Installed list reload (force=true) — re-runs brew info
+  //      --installed --json=v2 with the now-up-to-date version
+  //      knowledge from step 1, so the outdated flag is accurate.
   //
-  // Without the installed-list reload, a user who ran `brew upgrade`
-  // in their terminal would see the same stale outdated count even
-  // after a successful catalog refresh — the catalog and the
-  // installed list are two different data sources, and the user
-  // reasonably expects "Refresh" to refresh both.
+  // All three are needed for "Refresh" to mean what the user expects:
+  // "make every count and version on this page reflect reality right
+  // now." Without step 1, brew doesn't know about new releases. Without
+  // step 2, the Discover index lags. Without step 3, the Updates card
+  // shows stale outdated flags.
   //
-  // The store handles its own single-flight gating; we only need to
-  // surface success/failure to the user via the toast queue. Failure
-  // messages already disambiguate paranoid-mode vs brew-exit-non-zero
-  // on the store side.
+  // Each step's failure surfaces a typed toast and short-circuits the
+  // rest — a failed brew update typically means a flaky network or a
+  // tap permissions problem, both worth fixing before continuing.
+  let refreshing = $state(false);
   async function refreshCatalog() {
-    const ok = await catalog.refresh();
-    if (ok) {
-      // Force-reload installed packages so outdated flags are accurate.
-      // Best-effort: catalog refresh was the user-visible action; if
-      // the installed-list reload fails (rare) we don't surface a
-      // second toast on top of the catalog success one.
+    if (refreshing) return;
+    refreshing = true;
+
+    const tmpId = crypto.randomUUID();
+    activity.startJob("Updating Homebrew taps", tmpId, "brew update");
+    ui.openDrawer();
+
+    try {
+      // Step 1: brew update. Stream into Activity so the user sees
+      // each tap getting refreshed (or a clean "Already up-to-date").
+      const updateResult = await brewUpdate((evt) => {
+        if (evt.kind === "started" && evt.jobId !== tmpId) {
+          const j = activity.jobs.find((j) => j.jobId === tmpId);
+          if (j) j.jobId = evt.jobId;
+        }
+        activity.handleEvent(evt);
+      });
+      if (!updateResult.success) {
+        toast.error("brew update finished with errors", "See the Activity drawer.");
+        return;
+      }
+
+      // Step 2: catalog refresh (our own index from formulae.brew.sh).
+      const ok = await catalog.refresh();
+      if (!ok) {
+        if (catalog.refreshError) {
+          toast.error("Catalog refresh failed", catalog.refreshError);
+        }
+        return;
+      }
+
+      // Step 3: reload installed list with force=true so brew_list
+      // re-runs `brew info --installed` and the outdated flags reflect
+      // the fresh upstream knowledge from step 1. Best-effort — the
+      // success toast below covers the user-visible outcome.
       await packages.load(true).catch(() => {});
-      toast.success("Catalog refreshed", `Fetched from formulae.brew.sh`);
-    } else if (catalog.refreshError) {
-      toast.error("Catalog refresh failed", catalog.refreshError);
+
+      toast.success("Refreshed", "brew taps + catalog + installed list all current");
+    } catch (e) {
+      reportableToastError("Refresh failed", e);
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -416,10 +455,10 @@
           type="button"
           class="catalog-refresh"
           onclick={refreshCatalog}
-          disabled={catalog.refreshing}
-          title="Fetch the latest formula.json + cask.json from formulae.brew.sh"
+          disabled={refreshing}
+          title="Run brew update, refresh the catalog from formulae.brew.sh, and reload your installed list"
         >
-          {#if catalog.refreshing}
+          {#if refreshing}
             <Loader size={12} class="spin-slow" />
             <span>Refreshing…</span>
           {:else if catalog.summary && catalog.isStale}
