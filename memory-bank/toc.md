@@ -41,7 +41,7 @@ Project-scoped memory bank. **All agents working on this project read from and w
 | Path | Owner | Contents |
 |------|-------|----------|
 | `tasks/YYYY-MM/*.md` | Lead | Per-shipped-unit task records. One file per phase or release. See `tasks/2026-05/README.md` for index. |
-| `phases/phaseNN-plan.md` | Lead | **Shipped** phase plans (Phase 12, Phase 13, etc.) — design-time intent preserved as historical context. In-flight plans (e.g., `phase15-plan.md`) stay at top level until the phase ships. |
+| `phases/phaseNN-plan.md` | Lead | **Shipped** phase plans (Phase 12, Phase 13, Phase 15, etc.) — design-time intent preserved as historical context. In-flight plans live at `memory-bank/phase{N}-plan.md` (top level) while active, then move to `phases/` when the phase ships. **No in-flight plan as of v0.3.0.** |
 | `scans/YYYY-MM-DD/*` | Security Engineer | Point-in-time outputs from `cargo audit`, `cargo deny`, `semgrep`, `gitleaks`, etc. Date-stamped folders. Latest scans should match `security.md`'s most recent §N audit. |
 
 ## Agent collaboration protocol
@@ -57,10 +57,29 @@ Project-scoped memory bank. **All agents working on this project read from and w
 ## Conventions currently in use
 
 - ✅ `NEXT-SESSION.md` rewritten at every milestone
-- ✅ `tasks/YYYY-MM/` populated per shipped unit (retroactively backfilled 2026-05-25)
-- ✅ `phases/` for shipped plans, top-level for in-flight
+- ✅ `tasks/YYYY-MM/` populated per shipped unit (retroactively backfilled 2026-05-25; current cadence: contemporaneous)
+- ✅ `phases/` for shipped plans, top-level for in-flight (Phases 12, 13, 15 in `phases/`; no in-flight plan currently)
 - ✅ `scans/YYYY-MM-DD/` for tool-battery snapshots
 - ✅ `security.md` §N appended per release-time audit
+- ✅ Release notes (project-level, not memory-bank) live at `docs/release-notes/<version>.md` — one file per shipped release, fed to `gh release create --notes-file`. Started with v0.3.0.
+
+## Project root vs memory-bank
+
+Memory-bank is for **design + decision context** (specs, plans, audits, task records, ADRs). Project root + `docs/` are for **user/contributor-facing artifacts**:
+
+- **Root `.md` files** are limited to GitHub conventions (`README.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE`) plus AI-workflow files that need root for tool discovery (`AGENTS.md` and the `CLAUDE.md` symlink).
+- **`docs/`** holds everything else surfaced to users and contributors: `BUILD.md` (maintainer build flow), `PLAN.md` (full design + phase tracker), `PHILOSOPHY.md` (positioning), plus `release-notes/`, `icon/`, `screenshots/`.
+
+If you're tempted to add a new top-level `.md` at the repo root, put it in `docs/` unless it's required there by a convention.
+
+## Live vs historical entries within memory-bank
+
+Some files are **live** (always reflect current state) and some are **historical** (snapshots of past state, immutable once written):
+
+- **Live** — keep current: `toc.md`, `activeContext.md`, `NEXT-SESSION.md`, `decisions.md`, `projectbrief.md`, `techContext.md`, `systemPatterns.md`, `designSystem.md`, `uxArchitecture.md`, `visualStory.md`, `backendApi.md`, `frontendComponents.md`, `codeReview.md`, `realityCheck.md`, `apiTests.md`, `accessibility.md`, `security.md`, `ideas.md`.
+- **Historical** — append-only, do NOT rewrite past entries: `progress.md` (chronological log), `agentLog.md` (per-run stamps), `tasks/YYYY-MM/*.md` (per-shipped-unit records), `scans/YYYY-MM-DD/*` (point-in-time tool output), `phases/*.md` (shipped phase plans frozen at ship time).
+
+When the project changes (e.g., a file moves), update live docs to reflect the new state; leave historical entries alone — they're correct for the moment they describe.
 
 ## Conventions currently dormant
 
