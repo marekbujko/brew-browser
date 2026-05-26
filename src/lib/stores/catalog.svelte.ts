@@ -15,6 +15,8 @@
  */
 
 import {
+  catalogCasksSummary,
+  catalogFormulaeSummary,
   catalogLookupCask,
   catalogLookupFormula,
   catalogRefresh,
@@ -27,6 +29,7 @@ import {
   type Cask,
   type CatalogSummary,
   type Formula,
+  type PackageKind,
 } from "$lib/types";
 
 class CatalogStore {
@@ -42,6 +45,21 @@ class CatalogStore {
   refreshError: string | null = $state(null);
 
   private summaryLoadPromise: Promise<void> | null = null;
+
+  /**
+   * Per-token description maps, populated lazily on first call to
+   * `ensureSummariesLoaded()`. Used by `descOf(name, kind)` for the
+   * fallback subtitle in the Discover browse list — shows the upstream
+   * Homebrew `desc` field when AI Features is off OR the token isn't
+   * in the enrichment bundle.
+   *
+   * Two maps (not one merged) because formula and cask namespaces
+   * overlap (e.g., `python` is a formula AND a cask). The Discover
+   * row caller already knows the kind, so two-map lookup costs zero.
+   */
+  private descByFormula: Map<string, string> | null = null;
+  private descByCask: Map<string, string> | null = null;
+  private summariesLoadPromise: Promise<void> | null = null;
 
   /** Lazy-load the catalog summary on first access. Safe to call from
       multiple mount points (the Dashboard hero + the Discover banner
@@ -99,6 +117,59 @@ class CatalogStore {
     } finally {
       this.refreshing = false;
     }
+  }
+
+  /**
+   * Lazy-load the per-token description maps. Runs once per process;
+   * subsequent calls are no-ops (or wait on the in-flight promise).
+   * Fast: two IPC round-trips that read pre-parsed in-memory backend
+   * state (`catalog_formulae_summary` + `catalog_casks_summary`).
+   * Total payload is ~16k records × ~80 bytes = ~1.3 MiB JSON each,
+   * roughly 50–150 ms cold then memoised forever.
+   */
+  async ensureSummariesLoaded(): Promise<void> {
+    if (this.descByFormula && this.descByCask) return;
+    if (this.summariesLoadPromise) return this.summariesLoadPromise;
+    this.summariesLoadPromise = (async () => {
+      try {
+        const [formulae, casks] = await Promise.all([
+          catalogFormulaeSummary(),
+          catalogCasksSummary(),
+        ]);
+        const fm = new Map<string, string>();
+        for (const e of formulae) {
+          if (e.desc) fm.set(e.name, e.desc);
+        }
+        const cm = new Map<string, string>();
+        for (const e of casks) {
+          if (e.desc) cm.set(e.name, e.desc);
+        }
+        this.descByFormula = fm;
+        this.descByCask = cm;
+      } catch {
+        // Best-effort; subtitle fallback just stays null on failure.
+        this.descByFormula = new Map();
+        this.descByCask = new Map();
+      } finally {
+        this.summariesLoadPromise = null;
+      }
+    })();
+    return this.summariesLoadPromise;
+  }
+
+  /**
+   * Sync per-token description lookup. Returns the upstream Homebrew
+   * `desc` for a known formula/cask, or `null` when the token isn't in
+   * the catalog (or the summary maps haven't loaded yet — caller should
+   * have awaited `ensureSummariesLoaded()` first).
+   *
+   * Used by Discover row rendering as the fallback subtitle when AI
+   * Features is off or the enrichment bundle has no friendly name for
+   * the token.
+   */
+  descOf(name: string, kind: PackageKind): string | null {
+    const map = kind === "formula" ? this.descByFormula : this.descByCask;
+    return map?.get(name) ?? null;
   }
 
   /** Convenience wrapper around `catalog_lookup_formula`. Returns `null`

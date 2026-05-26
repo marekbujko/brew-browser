@@ -338,6 +338,21 @@
     });
   });
 
+  /** Donut hover state. Set by mouseenter on a slice OR a legend row;
+   *  cleared on mouseleave. Drives:
+   *    - slice highlight (hovered segment fattens, others dim)
+   *    - center-text takeover ("325 / installed" → "{count} / {label}")
+   *    - legend row visual indication
+   *
+   *  Keyboard accessibility: focus-on-slice could also drive this in a
+   *  future iteration; today the donut is decorative + the legend rows
+   *  carry the click affordance, so keyboard users get the count from
+   *  the always-visible legend columns. */
+  let hoveredCategory = $state<string | null>(null);
+  let hoveredSegment = $derived(
+    hoveredCategory ? categorySegments.find((s) => s.slug === hoveredCategory) : null,
+  );
+
   function jumpToCategory(slug: string) {
     if (slug === "__other__") {
       ui.setSection("discover");
@@ -617,28 +632,55 @@
             <svg viewBox="0 0 120 120" class="donut" role="img" aria-label="Category breakdown">
               <circle cx="60" cy="60" r={DONUT_RADIUS} class="donut-track" />
               {#each categorySegments as s (s.slug)}
+                {@const isHovered = hoveredCategory === s.slug}
+                {@const isDimmed = hoveredCategory !== null && !isHovered}
+                <!--
+                  Slices are decorative+hover-preview only. The canonical
+                  click target is the matching legend row below (real
+                  <button>, full keyboard support, screen-reader-named).
+                  Slice carries a <title> tooltip for mouse users who
+                  hover over the chart itself rather than the legend.
+                -->
                 <circle
                   cx="60"
                   cy="60"
                   r={DONUT_RADIUS}
                   fill="none"
                   stroke={s.color}
-                  stroke-width="20"
+                  stroke-width={isHovered ? 24 : 20}
                   stroke-dasharray="{(s.pct / 100) * DONUT_CIRC} {DONUT_CIRC}"
                   stroke-dashoffset="{-(s.startPct / 100) * DONUT_CIRC}"
                   transform="rotate(-90 60 60)"
-                />
+                  class="donut-slice"
+                  class:donut-slice--dim={isDimmed}
+                  role="presentation"
+                  onmouseenter={() => (hoveredCategory = s.slug)}
+                  onmouseleave={() => (hoveredCategory = null)}
+                >
+                  <title>{s.label}: {fmt(s.count)} ({s.pct.toFixed(1)}%)</title>
+                </circle>
               {/each}
-              <text x="60" y="58" text-anchor="middle" class="donut-total">{fmt(counts.total)}</text>
-              <text x="60" y="74" text-anchor="middle" class="donut-label">installed</text>
+              {#if hoveredSegment}
+                <text x="60" y="58" text-anchor="middle" class="donut-total">{fmt(hoveredSegment.count)}</text>
+                <text x="60" y="74" text-anchor="middle" class="donut-label donut-label--hover">{hoveredSegment.label}</text>
+              {:else}
+                <text x="60" y="58" text-anchor="middle" class="donut-total">{fmt(counts.total)}</text>
+                <text x="60" y="74" text-anchor="middle" class="donut-label">installed</text>
+              {/if}
             </svg>
             <ul class="donut-legend">
               {#each categorySegments as s (s.slug)}
                 {@const Icon = resolveCategoryIcon(s.icon)}
+                {@const isHovered = hoveredCategory === s.slug}
                 <li>
                   <button
                     class="legend-row"
+                    class:legend-row--hover={isHovered}
                     onclick={() => jumpToCategory(s.slug)}
+                    onmouseenter={() => (hoveredCategory = s.slug)}
+                    onmouseleave={() => (hoveredCategory = null)}
+                    onfocus={() => (hoveredCategory = s.slug)}
+                    onblur={() => (hoveredCategory = null)}
                     title={s.slug === "__other__" ? "Browse all in Discover" : `Browse ${s.label} in Discover`}
                   >
                     <span class="legend-dot" style="background: {s.color}"></span>
@@ -990,7 +1032,28 @@
     font-size: var(--text-body-sm);
     transition: background 0.12s ease;
   }
-  .legend-row:hover { background: var(--color-surface-sunken); }
+  .legend-row:hover,
+  .legend-row--hover {
+    background: var(--color-surface-sunken);
+  }
+
+  /* Donut slices animate width on hover; dimmed siblings fade so the
+     hovered slice pops without losing context. Stroke-width transitions
+     are SVG-friendly (unlike most CSS animations on SVG attributes). */
+  .donut-slice {
+    transition: stroke-width 120ms ease-out, opacity 120ms ease-out;
+  }
+  .donut-slice--dim {
+    opacity: 0.35;
+  }
+  /* Hover-mode label uses the same fill as the static "installed" but
+     could shift accent color if we wanted a stronger signal later. */
+  .donut-label--hover {
+    fill: var(--color-text-secondary);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .donut-slice { transition: none; }
+  }
   .legend-dot {
     width: 8px;
     height: 8px;

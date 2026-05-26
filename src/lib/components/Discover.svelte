@@ -24,6 +24,9 @@
   // banner and the chip filters.
   categories.ensureLoaded();
   catalog.ensureLoaded();
+  // Per-token desc maps power the subtitle fallback when AI Features
+  // is off or the token isn't in the enrichment bundle.
+  void catalog.ensureSummariesLoaded();
   // Enrichment store is referenced in row markup via `friendlyOf()`;
   // load once so the lookups start returning hits as soon as data lands.
   enrichment.ensureLoaded();
@@ -42,6 +45,17 @@
    *  no per-row $derived needed). */
   function friendlyOf(token: string): string | null {
     return enrichment.friendlyName(token);
+  }
+
+  /** Subtitle for a Discover row. Preference order:
+   *    1. AI-enriched friendly name (when AI Features is on + token has
+   *       an enrichment entry)
+   *    2. Upstream Homebrew `desc` (when the catalog summary map has it)
+   *    3. null (token line only)
+   *
+   *  Sync — both lookups read pre-loaded in-memory state. */
+  function subtitleOf(token: string, kind: PackageKind): string | null {
+    return friendlyOf(token) ?? catalog.descOf(token, kind);
   }
 
   async function refreshFromBanner() {
@@ -276,8 +290,8 @@
               >
                 <span class="name truncate">
                   <span class="name-text">{h.name}</span>
-                  {#if friendlyOf(h.name)}
-                    <span class="friendly-subtitle">{friendlyOf(h.name)}</span>
+                  {#if subtitleOf(h.name, h.kind)}
+                    <span class="friendly-subtitle">{subtitleOf(h.name, h.kind)}</span>
                   {/if}
                 </span>
                 <span class="kind"><Pill tone={h.kind === "formula" ? "formula" : "cask"}>{h.kind}</Pill></span>
