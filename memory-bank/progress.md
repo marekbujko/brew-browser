@@ -650,3 +650,40 @@ Cumulative point release rolling up 13 commits since `d7c2bca` (v0.3.0). Theme: 
 - The bundle id rename is the only user-visible cost: v0.3.0 users have to re-sign-in to GitHub once. Worth doing now at 18 stars rather than later at 1800.
 - `local_search` is the marquee feature. The scoring rubric was tuned by hand against a few representative queries (`vlc`, `password manager`, `AI`, `Video & Audio`). Future polish: surface category-label exact-match as a pinned "Browse → X" suggestion above brew's hits.
 - One stable v0.3.x follow-up: persist `last_checked_at` to disk so the auto-updater 24h floor honours typical morning/evening usage. Currently in-memory only.
+
+## 2026-05-26 (v0.4.0 backend on branch)
+
+Same-day continuation. Branch `feat/v0.4.0-velocity-and-history` off `main` at `d6d28a0`. Full file:line detail in `tasks/2026-05/19-v0.4.0-backend.md`.
+
+### Done (Steps 1–3 of 9 — full backend)
+
+- ✅ **Step 1** — `Settings.enhanced_trending_enabled: bool` (default `false`, forward-compat tested), `state::AppState::require_enhanced_trending()` gate composing master paranoid with per-feature toggle, new `BrewError::FeatureDisabled { feature }` variant so frontend can route toast to the right setting. +9 tests.
+- ✅ **Step 2** — `trending::client::fetch` now hits `install` + `install-on-request` in parallel via `tokio::join!` and merges on package name. New `trending::velocity::velocity_index(c30, c90, c365) → Option<f64>` pure-math helper (returns `None` on degenerate or too-small inputs). `commands::trending::trending_fetch` eager-warms all three windows via `tokio::task::JoinSet` and back-fills `velocity_index` from the cross-window join. +14 tests.
+- ✅ **Step 3** — New `trending::history::{mod, client, cache}` module. Two new IPCs: `trending_history_index()` (summary blob — top-N with velocity + compact sparkline; single fetch on tab mount) and `trending_history_fetch(name, kind)` (per-package full series; on-demand from PackageDetail). Both gated by `require_enhanced_trending`. URL builder rejects path traversal. LRU cache (cap 500, TTL 6h). 5 new types in `types.rs` for the history wire shape. +10 tests.
+
+### Decisions locked (per-decision rationale in task #19)
+
+- **D1** subpath `brew-browser.zerologic.com/trending-history/*` (not a new vhost) — reuses Caddy + cert
+- **D2** GitHub mirror of nightly JSON deferred to v0.5+
+- **D3** default sort by velocity desc + inline sparklines per row (star-history.com aesthetic); index blob carries compact sparkline arrays so the list renders from one fetch
+- **D4** sparkline empty state when toggle is off = passive (only in Settings → Network)
+- **D5** velocity computed server-side; frontend doesn't know the formula
+
+### Tests & lint at backend checkpoint
+
+- `cargo test`: **506 passed**, 0 failed, 6 ignored (473 → 506, +33 new)
+- `cargo build`: clean — zero dead-code warnings (every new symbol is wired and exercised)
+- Frontend untouched in this checkpoint
+
+### Workflow change (durable)
+
+From this branch onward, merges to `main` go through pull requests — push branch, `gh pr create`, review/CI, merge. No more direct pushes to `main`.
+
+### Still ahead
+
+- **Step 4** Settings UI (new `SettingsSectionTrendingHistory.svelte`, disclosure-list entry)
+- **Step 5** Trending tab UI (velocity column + sort-by-velocity default + inline sparklines)
+- **Step 6** PackageDetail sparkline (new `TrendingSparkline.svelte` + new `trendingHistory.svelte.ts` store)
+- **Step 7** umbp `tools/trending-collector/` (Bun TS daemon + seed.ts + cron + SQLite + static JSON output)
+- **Step 8** Memory bank + docs polish (decisions.md ADR, projectbrief.md nine→ten paths, security.md endpoint audit, backendApi.md / frontendComponents.md / techContext.md, `docs/release-notes/0.4.0.md`, README disclosure)
+- **Step 9** Caddy privacy hardening (IP-strip, no cookies, GET-only, cache-control; document snippet in security.md so it's auditable)

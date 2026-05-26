@@ -131,6 +131,8 @@ pub fn run() {
             brewfile_import,
             trending_fetch,
             trending_clear_cache,
+            trending_history_index,
+            trending_history_fetch,
             cask_icon,
             cask_icon_from_homepage,
             catalog_summary,

@@ -1,6 +1,6 @@
 //! `reqwest`-based fetch + parse for Homebrew analytics endpoints.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -9,7 +9,19 @@ use serde::Deserialize;
 use crate::error::BrewError;
 use crate::types::{PackageKind, TrendingEntry, TrendingReport, TrendingWindow};
 
-const HOST: &str = "https://formulae.brew.sh/api/analytics/install";
+/// Primary analytics endpoint — total installs over the window,
+/// inclusive of dependency-pulled installs. Used for the canonical
+/// `install_count` field on each entry.
+const HOST_INSTALL: &str = "https://formulae.brew.sh/api/analytics/install";
+
+/// v0.4.0 — `install-on-request` excludes dependency pulls; reflects
+/// only what users explicitly typed `brew install <foo>` for. Fetched
+/// in parallel with the primary `install` endpoint and merged into the
+/// same `TrendingEntry` so the frontend can choose which signal to
+/// display. Dramatically de-noises the leaderboard.
+const HOST_INSTALL_ON_REQUEST: &str =
+    "https://formulae.brew.sh/api/analytics/install-on-request";
+
 const TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ENTRIES: usize = 100;
 
@@ -40,16 +52,111 @@ struct RawAnalyticsItem {
     pub count: String,
 }
 
-/// Fetch + parse a single window's analytics into a `TrendingReport`.
+/// Fetch + parse a single window's analytics into a `TrendingReport`,
+/// hitting **both** the primary `install` and v0.4.0 `install-on-request`
+/// endpoints in parallel and merging the results.
 ///
 /// `installed` is the set of formula names the user has locally —
 /// used to populate `installed_locally` on each entry.
+///
+/// **Velocity is not populated here** — it requires data from the other
+/// two windows. `commands::trending::trending_fetch` orchestrates the
+/// three-window fetch and back-fills `velocity_index` from the cache.
+///
+/// Degraded path: if the `install-on-request` fetch fails (timeout,
+/// 5xx, etc.) the primary `install` data still ships and entries carry
+/// `install_on_request_count: None`. The opposite — primary fails —
+/// is a hard error since there's no useful report without it.
 pub async fn fetch(
     window: TrendingWindow,
     installed: &HashSet<String>,
 ) -> Result<TrendingReport, BrewError> {
-    let url = format!("{}/{}.json", HOST, window.as_path_segment());
-    let client = reqwest::Client::builder()
+    let client = build_client()?;
+
+    // Fire both fetches concurrently. tokio::join! waits for both;
+    // we tolerate the secondary failing but not the primary.
+    let (install_res, ior_res) = tokio::join!(
+        fetch_raw_window(&client, HOST_INSTALL, window),
+        fetch_raw_window(&client, HOST_INSTALL_ON_REQUEST, window),
+    );
+    let install = install_res?;
+    let ior_map: HashMap<String, RawAnalyticsItem> = match ior_res {
+        Ok(raw) => raw
+            .items
+            .into_iter()
+            .filter(|i| !i.formula.is_empty())
+            .map(|i| (i.formula.clone(), i))
+            .collect(),
+        Err(e) => {
+            // Soft-fail: log and continue with empty install-on-request
+            // data. The primary leaderboard still works; only the
+            // de-duplicated count is missing for this fetch cycle.
+            eprintln!(
+                "[trending] install-on-request fetch failed (continuing with install-only): {}",
+                e
+            );
+            HashMap::new()
+        }
+    };
+
+    let entries = merge_entries(install.items, ior_map, installed);
+
+    Ok(TrendingReport {
+        window,
+        fetched_at: Utc::now().to_rfc3339(),
+        cache_age_seconds: 0,
+        total_count: install.total_count,
+        entries,
+    })
+}
+
+/// v0.4.0 — pure merge of the two endpoint payloads into the final
+/// entry list. Extracted from `fetch` so the merge can be unit-tested
+/// without network. Behaviour:
+///
+/// - Iterate the primary `install` items in their original order.
+/// - Look up the install-on-request count for each by formula name.
+/// - Sort entries by descending `install_count` and re-rank starting at 1.
+/// - Truncate to [`MAX_ENTRIES`] (top 100 by installs).
+/// - `velocity_index` is left `None` here — populated by the
+///   orchestrating command after all three windows are joined.
+fn merge_entries(
+    install_items: Vec<RawAnalyticsItem>,
+    ior_map: HashMap<String, RawAnalyticsItem>,
+    installed: &HashSet<String>,
+) -> Vec<TrendingEntry> {
+    let mut entries: Vec<TrendingEntry> = install_items
+        .into_iter()
+        .filter(|item| !item.formula.is_empty())
+        .map(|item| {
+            let install_count = parse_count(&item.count);
+            let ior_match = ior_map.get(&item.formula);
+            TrendingEntry {
+                rank: item.number,
+                name: item.formula.clone(),
+                kind: PackageKind::Formula,
+                install_count,
+                install_count_formatted: item.count,
+                install_on_request_count: ior_match.map(|i| parse_count(&i.count)),
+                install_on_request_count_formatted: ior_match.map(|i| i.count.clone()),
+                velocity_index: None,
+                installed_locally: installed.contains(&item.formula),
+            }
+        })
+        .collect();
+
+    entries.sort_by_key(|e| std::cmp::Reverse(e.install_count));
+    for (i, e) in entries.iter_mut().enumerate() {
+        e.rank = (i as u32) + 1;
+    }
+    entries.truncate(MAX_ENTRIES);
+    entries
+}
+
+/// Build the shared reqwest client. Extracted so the concurrent
+/// `fetch_raw_window` calls share connection pooling.
+fn build_client() -> Result<reqwest::Client, BrewError> {
+    reqwest::Client::builder()
         .timeout(TIMEOUT)
         .user_agent(concat!(
             "brew-browser/",
@@ -58,9 +165,20 @@ pub async fn fetch(
         ))
         .build()
         .map_err(|e| BrewError::Network {
-            url: url.clone(),
+            url: HOST_INSTALL.into(),
             message: e.to_string(),
-        })?;
+        })
+}
+
+/// Fetch + parse a single endpoint/window combination into the raw
+/// JSON shape. The merging into `TrendingEntry` happens in `fetch()`
+/// after both endpoints respond.
+async fn fetch_raw_window(
+    client: &reqwest::Client,
+    host: &str,
+    window: TrendingWindow,
+) -> Result<RawAnalytics, BrewError> {
+    let url = format!("{}/{}.json", host, window.as_path_segment());
 
     let resp = client.get(&url).send().await.map_err(|e| {
         if let Some(status) = e.status() {
@@ -90,9 +208,9 @@ pub async fn fetch(
     })?;
 
     // Prefer the flat `items` array (current live endpoint shape).
-    // Fall back to flattening the legacy `formulae` object-of-arrays so a
-    // future endpoint revert doesn't silently empty the Trending tab.
-    let raw_items: Vec<RawAnalyticsItem> = if !raw.items.is_empty() {
+    // Fall back to flattening the legacy `formulae` object-of-arrays so
+    // a future endpoint revert doesn't silently empty the Trending tab.
+    let items: Vec<RawAnalyticsItem> = if !raw.items.is_empty() {
         raw.items
     } else {
         raw.formulae
@@ -101,36 +219,10 @@ pub async fn fetch(
             .collect()
     };
 
-    let mut entries: Vec<TrendingEntry> = raw_items
-        .into_iter()
-        .filter(|item| !item.formula.is_empty())
-        .map(|item| {
-            let install_count = parse_count(&item.count);
-            TrendingEntry {
-                rank: item.number,
-                name: item.formula.clone(),
-                kind: PackageKind::Formula,
-                install_count,
-                install_count_formatted: item.count,
-                installed_locally: installed.contains(&item.formula),
-            }
-        })
-        .collect();
-
-    // Sort by descending install_count and re-rank so a missing/zero
-    // `number` field doesn't shuffle things.
-    entries.sort_by_key(|e| std::cmp::Reverse(e.install_count));
-    for (i, e) in entries.iter_mut().enumerate() {
-        e.rank = (i as u32) + 1;
-    }
-    entries.truncate(MAX_ENTRIES);
-
-    Ok(TrendingReport {
-        window,
-        fetched_at: Utc::now().to_rfc3339(),
-        cache_age_seconds: 0,
+    Ok(RawAnalytics {
         total_count: raw.total_count,
-        entries,
+        items,
+        formulae: std::collections::HashMap::new(),
     })
 }
 
@@ -276,5 +368,135 @@ mod tests {
         assert_eq!(parsed.formulae.len(), 2);
         assert!(parsed.formulae.contains_key("wget"));
         assert!(parsed.formulae.contains_key("git"));
+    }
+
+    // ---------- v0.4.0: merge_entries ----------
+
+    fn raw(name: &str, count: &str, number: u32) -> RawAnalyticsItem {
+        RawAnalyticsItem {
+            number,
+            formula: name.into(),
+            count: count.into(),
+        }
+    }
+
+    #[test]
+    fn merge_carries_install_on_request_when_both_endpoints_have_the_package() {
+        // ca-certificates: dep-pulled monster on install, much smaller
+        // on install-on-request (almost nobody types `brew install
+        // ca-certificates` directly).
+        let install = vec![raw("ca-certificates", "481,964", 1)];
+        let ior: HashMap<String, RawAnalyticsItem> = [(
+            "ca-certificates".to_string(),
+            raw("ca-certificates", "1,234", 1),
+        )]
+        .into_iter()
+        .collect();
+        let installed = HashSet::new();
+
+        let entries = merge_entries(install, ior, &installed);
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.install_count, 481_964);
+        assert_eq!(e.install_on_request_count, Some(1_234));
+        assert_eq!(
+            e.install_on_request_count_formatted.as_deref(),
+            Some("1,234")
+        );
+    }
+
+    #[test]
+    fn merge_degrades_gracefully_when_install_on_request_missing() {
+        // Primary fetch succeeded but install-on-request did not — the
+        // entry must still ship, just without the IOR fields. This is
+        // load-bearing for the soft-fail contract documented in fetch().
+        let install = vec![raw("wget", "1000", 1), raw("git", "5000", 2)];
+        let ior = HashMap::new();
+        let installed = HashSet::new();
+
+        let entries = merge_entries(install, ior, &installed);
+        assert_eq!(entries.len(), 2);
+        for e in &entries {
+            assert!(
+                e.install_on_request_count.is_none(),
+                "{} must carry no IOR data on degraded path",
+                e.name
+            );
+            assert!(e.install_on_request_count_formatted.is_none());
+        }
+        // Primary install_count must be intact.
+        let git = entries.iter().find(|e| e.name == "git").unwrap();
+        assert_eq!(git.install_count, 5_000);
+    }
+
+    #[test]
+    fn merge_only_includes_packages_in_install_payload() {
+        // If install-on-request returns a package the primary doesn't
+        // know about (theoretical edge case), the merge keeps the
+        // primary as the source of truth and drops the IOR-only entry.
+        let install = vec![raw("wget", "100", 1)];
+        let ior: HashMap<String, RawAnalyticsItem> = [
+            ("wget".to_string(), raw("wget", "50", 1)),
+            ("ghost".to_string(), raw("ghost", "99", 2)),
+        ]
+        .into_iter()
+        .collect();
+        let installed = HashSet::new();
+
+        let entries = merge_entries(install, ior, &installed);
+        assert_eq!(entries.len(), 1, "ghost (IOR-only) must NOT appear");
+        assert_eq!(entries[0].name, "wget");
+    }
+
+    #[test]
+    fn merge_re_ranks_after_sort() {
+        // Input order doesn't matter; final ranks must reflect
+        // descending install_count.
+        let install = vec![
+            raw("c", "10", 1),
+            raw("a", "100", 2),
+            raw("b", "50", 3),
+        ];
+        let ior = HashMap::new();
+        let installed = HashSet::new();
+
+        let entries = merge_entries(install, ior, &installed);
+        assert_eq!(entries[0].name, "a");
+        assert_eq!(entries[0].rank, 1);
+        assert_eq!(entries[1].name, "b");
+        assert_eq!(entries[1].rank, 2);
+        assert_eq!(entries[2].name, "c");
+        assert_eq!(entries[2].rank, 3);
+    }
+
+    #[test]
+    fn merge_truncates_to_max_entries() {
+        // Synthesize MAX_ENTRIES + 50 entries; result must be capped.
+        let install: Vec<RawAnalyticsItem> = (0..(MAX_ENTRIES + 50))
+            .map(|i| raw(&format!("pkg{i}"), "1", i as u32 + 1))
+            .collect();
+        let entries = merge_entries(install, HashMap::new(), &HashSet::new());
+        assert_eq!(entries.len(), MAX_ENTRIES);
+    }
+
+    #[test]
+    fn merge_velocity_index_starts_none() {
+        // velocity_index is populated by the orchestrating command
+        // after joining all three windows — not by merge_entries.
+        let install = vec![raw("wget", "100", 1)];
+        let entries = merge_entries(install, HashMap::new(), &HashSet::new());
+        assert!(entries[0].velocity_index.is_none());
+    }
+
+    #[test]
+    fn merge_marks_installed_packages() {
+        let install = vec![raw("wget", "100", 1), raw("git", "200", 2)];
+        let mut installed = HashSet::new();
+        installed.insert("git".to_string());
+        let entries = merge_entries(install, HashMap::new(), &installed);
+        let git = entries.iter().find(|e| e.name == "git").unwrap();
+        let wget = entries.iter().find(|e| e.name == "wget").unwrap();
+        assert!(git.installed_locally);
+        assert!(!wget.installed_locally);
     }
 }

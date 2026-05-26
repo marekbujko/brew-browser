@@ -1,9 +1,42 @@
 # NEXT-SESSION handoff — read this first
 
-**Date written:** 2026-05-25 (v0.3.0 shipped)
+**Date written:** 2026-05-26 (v0.4.0 backend on branch)
 **Session lead:** Claude Opus 4.7 [1m] (Claude Code in the terminal) with Michael
 
 Read this first, then `activeContext.md`, then the latest entries in `progress.md`, then specific `tasks/2026-05/*.md` for full detail on what just happened.
+
+---
+
+## v0.4.0 backend on branch (2026-05-26)
+
+**Branch:** `feat/v0.4.0-velocity-and-history` (off `main` at `d6d28a0`). Working tree has the full backend (Steps 1–3 of the 9-step plan); frontend, umbp collector, docs polish, and Caddy hardening still ahead. **Workflow change as of this branch: merges to `main` go through PRs from here on — no more direct pushes.**
+
+### Backend done
+
+- **Step 1**: `Settings.enhanced_trending_enabled` (off by default), `state::require_enhanced_trending()` gate composing master paranoid with per-feature toggle, new `BrewError::FeatureDisabled` variant.
+- **Step 2**: parallel `install` + `install-on-request` fetch via `tokio::join!`, server-side velocity from cached 3-window join via `tokio::task::JoinSet`, `TrendingEntry` extended with optional IOR + `velocity_index` fields.
+- **Step 3**: new `trending::history::{mod, client, cask}` module, two IPCs (`trending_history_index`, `trending_history_fetch`), per-package LRU cache (cap 500, TTL 6h), path-traversal-safe URL builder.
+- Tests: **473 → 506** (+33 new). `cargo build` clean, zero dead-code warnings.
+- Full file:line detail in `tasks/2026-05/19-v0.4.0-backend.md`. Architectural decisions D1–D5 locked in that file.
+
+### What to do on next-session pickup
+
+1. **Read `tasks/2026-05/19-v0.4.0-backend.md` first** — it has every file:line, every test name, and every locked decision.
+2. **Continue with Step 4** (frontend Settings UI). Reuse pattern from `SettingsSectionUpdates.svelte`. New `SettingsSectionTrendingHistory.svelte`. Add 6th entry to `pathStatuses` in `SettingsSectionNetwork.svelte`.
+3. Then Step 5 (Trending tab — velocity column + sort + inline sparklines), Step 6 (PackageDetail sparkline), Step 7 (umbp collector — new `tools/trending-collector/`), Step 8 (memory-bank + docs), Step 9 (Caddy privacy hardening).
+4. When ready to merge: `gh pr create` from the branch into `main`. Don't push to `main` directly.
+
+### v0.3.x polish queue (still valid — batch into v0.3.2 or fold into v0.4.0 finishing pass)
+
+(Same list as before — these don't depend on v0.4.0 backend, can be picked up whenever.)
+
+- **Donut hover center-text overflow** on long category labels.
+- **Stale "Paranoid mode is on" toast** wording — one-line fix in `src/lib/types.ts`.
+- **localStorage flag gating eager `loadStatus()`** in TitlebarControls.
+- **`cancelSignin` timer leak** — rare edge case.
+- **Startup placeholder-pubkey guard** — 5-line panic-on-PLACEHOLDER in release builds.
+- **Persist `last_checked_at` to disk** — auto-updater 24h floor across launches.
+- **Activity → data-dir migration** — bigger persistence cleanup.
 
 ---
 

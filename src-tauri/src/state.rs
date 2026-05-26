@@ -26,6 +26,7 @@ use crate::commands::updater::UpdaterState;
 use crate::enrichment::EnrichmentData;
 use crate::error::BrewError;
 use crate::trending::cache::TrendingCache;
+use crate::trending::history::cache::TrendingHistoryCache;
 use crate::types::{BrewEnvironment, PackageList};
 
 /// Per-job handle stored in `AppState.jobs`. The streaming task holds
@@ -63,6 +64,13 @@ pub struct AppState {
 
     /// Trending analytics cache (per-window TTL).
     pub trending_cache: Arc<Mutex<TrendingCache>>,
+
+    /// v0.4.0 — opt-in trending-history cache for the
+    /// `brew-browser.zerologic.com/trending-history/*` endpoint.
+    /// Separate from `trending_cache` because the trust boundary is
+    /// different (project infra vs. Homebrew first-party) and the TTL
+    /// is longer (6h vs. 1h default).
+    pub trending_history_cache: Arc<Mutex<TrendingHistoryCache>>,
 
     /// Resolved app-data directory for Brewfiles.
     pub brewfiles_dir: PathBuf,
@@ -204,6 +212,7 @@ impl AppState {
             brew_write_lock: Arc::new(Mutex::new(())),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             trending_cache: Arc::new(Mutex::new(TrendingCache::default())),
+            trending_history_cache: Arc::new(Mutex::new(TrendingHistoryCache::default())),
             brewfiles_dir,
             cache_dir,
             app_data_dir,
@@ -276,6 +285,38 @@ impl AppState {
                     feature: feature.to_string(),
                 })
             }
+        }
+    }
+
+    /// v0.4.0 — composed gate for endpoints that are *both* network-
+    /// gated by paranoid mode AND opt-in via a per-feature toggle. Used
+    /// by [`crate::commands::trending::trending_history_fetch`] and
+    /// future features hitting `brew-browser.zerologic.com/*`.
+    ///
+    /// Returns:
+    /// - `Ok(())` if paranoid is OFF **and** `enhanced_trending_enabled`
+    ///   is `true`.
+    /// - `Err(ParanoidModeBlocked { feature })` if paranoid would deny
+    ///   `require_network` (master switch wins; the per-feature toggle
+    ///   is irrelevant when paranoid is on).
+    /// - `Err(FeatureDisabled { feature })` if paranoid allows but the
+    ///   per-feature toggle is off (or `FirstLaunch` — fresh-install
+    ///   posture is opt-in only).
+    ///
+    /// Fail-closed on `Corrupt` is handled by the inner `require_network`
+    /// call — `Corrupt` always denies first with `ParanoidModeBlocked`.
+    pub async fn require_enhanced_trending(&self) -> Result<(), BrewError> {
+        // Master paranoid gate first — same error variant other endpoints
+        // use, so the frontend toast routing stays uniform.
+        self.require_network("trending_history").await?;
+        // Per-feature opt-in gate. FirstLaunch defaults are `false` for
+        // this field by design (see Settings::default in commands/settings.rs).
+        let guard = self.settings.read().await;
+        match &*guard {
+            SettingsLoadState::Loaded(s) if s.enhanced_trending_enabled => Ok(()),
+            _ => Err(BrewError::FeatureDisabled {
+                feature: "trending_history".to_string(),
+            }),
         }
     }
 }
@@ -432,6 +473,86 @@ mod tests {
                 }
                 other => panic!("expected block for {feat}, got {other:?}"),
             }
+        }
+    }
+
+    // ---------- v0.4.0: require_enhanced_trending ----------
+
+    #[tokio::test]
+    async fn require_enhanced_trending_allows_when_toggle_on_and_paranoid_off() {
+        let s = Settings {
+            paranoid_mode: false,
+            enhanced_trending_enabled: true,
+            ..Settings::default()
+        };
+        let state = build_state_with(SettingsLoadState::Loaded(s)).await;
+        assert!(state.require_enhanced_trending().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn require_enhanced_trending_blocks_when_toggle_off() {
+        // Toggle off → FeatureDisabled (NOT ParanoidModeBlocked — the
+        // cure is a different setting toggle).
+        let s = Settings {
+            paranoid_mode: false,
+            enhanced_trending_enabled: false,
+            ..Settings::default()
+        };
+        let state = build_state_with(SettingsLoadState::Loaded(s)).await;
+        match state.require_enhanced_trending().await {
+            Err(BrewError::FeatureDisabled { feature }) => {
+                assert_eq!(feature, "trending_history");
+            }
+            other => panic!("expected FeatureDisabled, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn require_enhanced_trending_blocks_when_paranoid_on_even_if_toggle_on() {
+        // Master switch wins. Frontend should route to Offline Mode
+        // toggle, not the per-feature toggle.
+        let s = Settings {
+            paranoid_mode: true,
+            enhanced_trending_enabled: true,
+            ..Settings::default()
+        };
+        let state = build_state_with(SettingsLoadState::Loaded(s)).await;
+        match state.require_enhanced_trending().await {
+            Err(BrewError::ParanoidModeBlocked { feature }) => {
+                assert_eq!(feature, "trending_history");
+            }
+            other => panic!("expected ParanoidModeBlocked, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn require_enhanced_trending_blocks_on_first_launch() {
+        // FirstLaunch → require_network allows but the per-feature
+        // toggle defaults to false → FeatureDisabled. Critical for
+        // first-install posture: zero zerologic.com traffic until opt-in.
+        let state = build_state_with(SettingsLoadState::FirstLaunch).await;
+        match state.require_enhanced_trending().await {
+            Err(BrewError::FeatureDisabled { feature }) => {
+                assert_eq!(feature, "trending_history");
+            }
+            other => panic!("expected FeatureDisabled, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn require_enhanced_trending_blocks_when_corrupt() {
+        // Corrupt → paranoid gate fires first with ParanoidModeBlocked.
+        // Important: this is the same error code other endpoints emit
+        // on Corrupt, so the toast UX stays uniform across features.
+        let state = build_state_with(SettingsLoadState::Corrupt {
+            message: "boom".into(),
+        })
+        .await;
+        match state.require_enhanced_trending().await {
+            Err(BrewError::ParanoidModeBlocked { feature }) => {
+                assert_eq!(feature, "trending_history");
+            }
+            other => panic!("expected ParanoidModeBlocked from corrupt, got {other:?}"),
         }
     }
 }

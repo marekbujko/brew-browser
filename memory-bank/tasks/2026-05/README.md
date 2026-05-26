@@ -24,6 +24,7 @@ Per-task records for May 2026 work on brew-browser. **Retroactively reconstructe
 | 16 | [Phase 15 fix-up pass: 5 CRITICAL findings resolved](./16-phase-15-fixup-pass.md) | 2026-05-25 | `1bfe21f` | v0.3.0 |
 | 17 | [Expand GitHub package resolution beyond homepage field](./17-github-resolution-beyond-homepage.md) | 2026-05-25 | `820c1f0` | v0.3.0 |
 | 18 | [v0.3.1 release — magic search + curated upgrade + identity cleanup + lists overhaul](./18-v0.3.1-release.md) | 2026-05-25 | `6b97e65` (prep) + `v0.3.1` tag | v0.3.1 |
+| 19 | [v0.4.0 backend — velocity scoring + opt-in history endpoint](./19-v0.4.0-backend.md) | 2026-05-26 | branch `feat/v0.4.0-velocity-and-history` | target v0.4.0 |
 | 99 | [Deferred / dropped tasks](./99-deferred-and-dropped.md) | (ongoing) | — | — |
 
 ## Reconstruction notes

@@ -124,6 +124,23 @@ pub struct Settings {
     /// indicator even if every previous version is in this list.
     #[serde(default)]
     pub skipped_update_versions: Vec<String>,
+
+    /// v0.4.0 — opt-in fetch of historical install trends from
+    /// `brew-browser.zerologic.com/trending-history/*`. When **false**
+    /// (default), the Trending tab and PackageDetail render only what
+    /// `formulae.brew.sh` exposes natively (30d/90d/365d snapshots) and
+    /// the new endpoint is never contacted. When **true**, the app
+    /// fetches per-package historical series to power sparklines.
+    ///
+    /// Distinct trust boundary from the always-on Homebrew endpoints —
+    /// `brew-browser.zerologic.com` is operated by the project, not
+    /// upstream Homebrew. See `memory-bank/security.md` for the
+    /// endpoint audit and `README.md` for the disclosed outbound paths.
+    ///
+    /// Paranoid mode overrides this regardless: when paranoid is on,
+    /// `require_enhanced_trending` denies even with this flag set.
+    #[serde(default)]
+    pub enhanced_trending_enabled: bool,
 }
 
 /// Default factory for [`Settings::ai_features_enabled`] — separated
@@ -156,6 +173,12 @@ impl Default for Settings {
             // Empty by default — populated as the user dismisses
             // individual versions via the title-bar indicator's `×`.
             skipped_update_versions: Vec::new(),
+            // Off by default per v0.4.0 plan: brew-browser.zerologic.com
+            // (our infra) stays cold until the user explicitly opts in
+            // via Settings → Network. Velocity sorting + heat/cool
+            // badges still work without this — they're computed from
+            // the always-on Homebrew analytics windows.
+            enhanced_trending_enabled: false,
         }
     }
 }
@@ -574,6 +597,7 @@ mod tests {
             ai_features_enabled: false,
             update_auto_check: true,
             skipped_update_versions: vec!["0.3.0".into(), "0.3.1".into()],
+            enhanced_trending_enabled: true,
         };
         let written = persist(tmp.path(), s.clone()).await.expect("persist");
         assert_eq!(written, s);
@@ -632,6 +656,7 @@ mod tests {
             ai_features_enabled: true,
             update_auto_check: false,
             skipped_update_versions: Vec::new(),
+            enhanced_trending_enabled: false,
         };
         let written = persist(tmp.path(), s).await.expect("persist");
         assert_eq!(written.catalog_stale_banner_days, Settings::CATALOG_STALE_DAYS_MAX);
@@ -896,6 +921,78 @@ mod tests {
         let reloaded = load_async(tmp.path()).await;
         match reloaded {
             SettingsLoadState::Loaded(loaded) => assert!(!loaded.ai_features_enabled),
+            other => panic!("expected Loaded, got {other:?}"),
+        }
+    }
+
+    /// v0.4.0 — `enhanced_trending_enabled` defaults to false. This is
+    /// load-bearing: the new endpoint must never be hit without explicit
+    /// user opt-in, so a forgotten default-true would silently leak the
+    /// fact that brew-browser is in use.
+    #[test]
+    fn enhanced_trending_defaults_to_false() {
+        let s = Settings::default();
+        assert!(
+            !s.enhanced_trending_enabled,
+            "enhanced trending must be OFF by default — endpoint is opt-in"
+        );
+    }
+
+    /// v0.4.0 — older `settings.json` files written before the field
+    /// existed must read cleanly with the field absent → false. Locks
+    /// the forward-compat behaviour so a v0.3.x user upgrading to
+    /// v0.4.0 gets the opt-in posture, not a silent enable.
+    #[tokio::test]
+    async fn missing_enhanced_trending_field_defaults_to_false() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = settings_path(tmp.path());
+        // Write a v0.3.x-shape settings.json with the new field absent.
+        tokio::fs::write(
+            &path,
+            br#"{"paranoidMode": false, "catalogStaleBannerDays": 14}"#,
+        )
+        .await
+        .unwrap();
+
+        let state = load_at_startup(tmp.path());
+        match state {
+            SettingsLoadState::Loaded(s) => {
+                assert!(
+                    !s.enhanced_trending_enabled,
+                    "missing field must default to false (opt-in posture)"
+                );
+            }
+            other => panic!("expected Loaded, got {other:?}"),
+        }
+    }
+
+    /// v0.4.0 — `enhanced_trending_enabled` round-trips on the wire as
+    /// camelCase `enhancedTrendingEnabled`. Pin the wire shape so a
+    /// future serde rename doesn't silently break the frontend store.
+    #[tokio::test]
+    async fn enhanced_trending_round_trips_with_camel_case_key() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let s = Settings {
+            enhanced_trending_enabled: true,
+            ..Settings::default()
+        };
+        persist(tmp.path(), s.clone()).await.expect("persist");
+
+        let raw = tokio::fs::read_to_string(settings_path(tmp.path()))
+            .await
+            .expect("read raw");
+        assert!(
+            raw.contains("\"enhancedTrendingEnabled\""),
+            "expected camelCase key in raw JSON, got: {raw}"
+        );
+        assert!(
+            !raw.contains("\"enhanced_trending_enabled\""),
+            "must not emit snake_case key"
+        );
+
+        let reloaded = load_async(tmp.path()).await;
+        match reloaded {
+            SettingsLoadState::Loaded(loaded) => assert!(loaded.enhanced_trending_enabled),
             other => panic!("expected Loaded, got {other:?}"),
         }
     }

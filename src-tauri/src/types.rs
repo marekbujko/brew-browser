@@ -343,8 +343,28 @@ pub struct TrendingEntry {
     pub rank: u32,
     pub name: String,
     pub kind: PackageKind,
+    /// Cumulative installs over the report's window. Includes installs
+    /// pulled in as transitive dependencies — `ca-certificates`,
+    /// `openssl@3`, and friends dominate by this metric purely because
+    /// everything depends on them.
     pub install_count: u64,
     pub install_count_formatted: String,
+    /// v0.4.0 — explicit user-initiated installs (excludes dependency
+    /// pulls). Fetched from the `install-on-request` analytics endpoint
+    /// in parallel with the primary `install` window. `None` only when
+    /// the secondary fetch failed — the entry still ships with whatever
+    /// the primary endpoint returned so the tab degrades gracefully.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_on_request_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_on_request_count_formatted: Option<String>,
+    /// v0.4.0 — derived velocity index from the three rolling windows.
+    /// `1.0` ≈ steady, `>1.5` surging, `<0.7` cooling. `None` when the
+    /// other two windows aren't yet cached or the package's annual
+    /// count is too small for a stable ratio (see
+    /// [`crate::trending::velocity::velocity_index`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub velocity_index: Option<f64>,
     pub installed_locally: bool,
 }
 
@@ -356,6 +376,100 @@ pub struct TrendingReport {
     pub cache_age_seconds: u64,
     pub total_count: u64,
     pub entries: Vec<TrendingEntry>,
+}
+
+// ---------- v0.4.0: Trending history (opt-in endpoint) ----------
+
+/// v0.4.0 — origin of a single history point. Lets the frontend fade
+/// or label the historical-only portion of a sparkline (the three
+/// derived "seed" buckets from rolling-window subtraction) distinctly
+/// from the real daily snapshots collected from launch day onward.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TrendingHistorySource {
+    /// Derived from formulae.brew.sh rolling-window subtraction at
+    /// collector bootstrap. Coarser granularity (covers a multi-day
+    /// span); useful for showing trajectory before nightly snapshots
+    /// began accumulating.
+    Seed,
+    /// Captured from a nightly snapshot of the rolling-window counts.
+    /// Once we have ~30 days of these, adjacent-snapshot subtraction
+    /// produces clean per-day install estimates.
+    Daily,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendingHistoryPoint {
+    /// ISO date YYYY-MM-DD of the snapshot (or bucket midpoint for
+    /// seed entries).
+    pub date: String,
+    /// 30-day rolling-window count at this snapshot. Available for
+    /// every Daily point and the most-recent Seed bucket.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count_30d: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count_90d: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count_365d: Option<u64>,
+    /// Same shape as the above, sourced from the install-on-request
+    /// endpoint. Populated only when the collector pulled both
+    /// endpoints on this date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count_install_on_request_30d: Option<u64>,
+    /// Server-derived per-day install estimate. `None` for seed
+    /// points (no daily granularity yet) and for daily points that
+    /// don't have a usable predecessor 30 days earlier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_daily_installs: Option<u64>,
+    pub source: TrendingHistorySource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendingHistorySeries {
+    pub name: String,
+    pub kind: PackageKind,
+    pub points: Vec<TrendingHistoryPoint>,
+    /// ISO timestamp the collector wrote this series. Distinct from
+    /// `cache_age_seconds` which measures how long the *frontend cache*
+    /// has held the response.
+    pub generated_at: String,
+    /// Local cache age in seconds. Populated by the IPC layer after
+    /// reading from cache, not by the collector.
+    #[serde(default)]
+    pub cache_age_seconds: u64,
+}
+
+/// v0.4.0 — compact summary blob fetched once and consumed by the
+/// Trending list view to render inline sparklines + velocity badges
+/// without per-row HTTP. Per-package detail views fetch the full
+/// `TrendingHistorySeries` separately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendingHistoryIndex {
+    pub generated_at: String,
+    pub packages: Vec<TrendingHistoryIndexEntry>,
+    /// Local cache age in seconds. Populated by the IPC layer.
+    #[serde(default)]
+    pub cache_age_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendingHistoryIndexEntry {
+    pub name: String,
+    pub kind: PackageKind,
+    /// Server-precomputed velocity index — the same value the client
+    /// could compute from the three rolling windows, but baked in here
+    /// for consistency with what the trending list shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub velocity_index: Option<f64>,
+    /// Compact per-day series for inline sparklines. Most recent N
+    /// data points (~30), enough for a tiny chart. Mix of estimated
+    /// daily installs (when available) and rolling-window snapshots
+    /// (otherwise); the frontend treats it as opaque chart data.
+    pub sparkline: Vec<u64>,
 }
 
 // ---------- Tests ----------

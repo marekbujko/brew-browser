@@ -1,89 +1,91 @@
 # Active Context
 
-**Date:** 2026-05-26 (v0.3.1 released)
-**State:** v0.3.1 signed + notarized + stapled + tagged + GH-released + manifest deployed. Same-day cumulative release on top of v0.3.0. Auto-updater path validated end-to-end (manifest reachable, asset 200 via redirect, sha256 + minisign verified). v0.3.0 users get this via Settings → Network → Updates → Check now; one-time GitHub re-sign-in via the Re-authorize toast button (Keychain ACL is tied to the renamed bundle id).
+**Date:** 2026-05-26 (v0.4.0 backend complete on branch)
+**State:** Backend for v0.4.0 (Trending Velocity + Opt-in History Endpoint) complete and tested on branch `feat/v0.4.0-velocity-and-history`. Frontend (Steps 4–6), umbp trending-collector (Step 7), docs + memory-bank polish (Step 8), and Caddy privacy hardening (Step 9) still ahead. From this branch onward, merges to `main` go through PRs — no more direct pushes to `main`.
 
 ## Repo
 
 - **github.com/msitarzewski/brew-browser** — public, MIT
-- **Released:** v0.1.0, v0.2.0, v0.2.1 (live on GitHub Releases — `gh release list`)
-- **Working toward:** v0.3.0 (single coherent release, NOT splitting a v0.2.2)
-- **Open issue:** [#1 — Post-GitHub-Auth Issues](https://github.com/msitarzewski/brew-browser/issues/1) (reported by @heyjawrsh, recurring; ROOT CAUSED + FIXED this session, ship in v0.3.0)
-- **Stars:** 9 (as of last check)
-- **HN post:** [item 48260242](https://news.ycombinator.com/item?id=48260242) (buried at 1 point)
-- **LinkedIn announcement:** alive — 1,496 impressions / 914 reached / 28 reactions / 10 comments / 5 followers in first 10 hours
+- **Released:** v0.1.0, v0.2.0, v0.2.1, v0.3.0, v0.3.1 (live on GitHub Releases — `gh release list`)
+- **Working toward:** v0.4.0 (single coherent release; backend on this branch, frontend + collector + docs ahead)
+- **Branch:** `feat/v0.4.0-velocity-and-history` (off `main` at `d6d28a0`)
+- **Stars:** 18 (as of v0.3.1 ship)
 
-## What landed this session (uncommitted, ~30 files)
+## What landed this session (uncommitted, on the branch)
 
-### Phase 15 — In-app updater + Offline Mode UI rename (FIX-UP DONE)
+### v0.4.0 backend — Steps 1–3 (full file:line detail in `tasks/2026-05/19-v0.4.0-backend.md`)
 
-4 parallel agents (Backend Architect + Frontend Developer #1 + Frontend Developer #2 for rename sweep + Technical Writer) plus a Lead-written bridging `update_skip` IPC. **+34 backend tests** (411 → 445). All `npm run check` + `cargo check` + `cargo clippy -D warnings` clean.
+**Step 1 — Settings + per-feature gate + new error variant**
 
-2 review agents (Code Reviewer + Security Engineer) returned **NEEDS-WORK with 5 CRITICAL findings**; all 5 resolved in this session's fix-up pass (task #16, **+3 backend tests**, 447 → 450). Full detail in `tasks/2026-05/16-phase-15-fixup-pass.md`:
+- `Settings.enhanced_trending_enabled: bool` (default `false`, `#[serde(default)]`)
+- `state::AppState::require_enhanced_trending()` — composes paranoid gate + per-feature toggle; returns `ParanoidModeBlocked` or `FeatureDisabled` per the rule "different cure = different error"
+- `BrewError::FeatureDisabled { feature: String }` — new variant so frontend toast routes to the right setting
 
-1. ✅ IPC wire-shape mismatch — frontend `UpdateCheckOutcome` flattened to match backend's flat `{kind, version, currentVersion, notes, pubDate, skipped}`; `blocked` variant removed (Offline Mode surfaces as `ParanoidModeBlocked` error). `UpdateInfo` repurposed as the store's internal shape (no more invented `notesUrl`/`sha256`).
-2. ✅ Relaunch button — new `update_relaunch` IPC that spawns a 50ms-delayed `app.restart()`; frontend `updater.relaunch()` wires the button. `run_install` now clears `cached_available` post-success.
-3. ✅ Manifest artifact format — `publish-manifest.sh` operates on `bundle/macos/brew-browser.app.tar.gz`, signs and hashes that, emits a URL pointing at the GH release asset under `brew-browser_<v>_aarch64.app.tar.gz`. `BUILD.md` rewritten to cover the two-artifact release (`.dmg` for fresh installs + `.app.tar.gz` for auto-updater).
-4. ✅ Missing error variants — `hash_mismatch`, `signature_verification_failed`, `downgrade_rejected` added to `BrewErrorPayload` and `brewErrorMessage`.
-5. ✅ `update_skip` Corrupt-settings safety — refactored into `run_skip` inner; Corrupt branch refuses with typed error; `FirstLaunch` materializes defaults with the skip (correct first-write behavior). +2 backend tests pin the new behavior.
+**Step 2 — install-on-request fetch + velocity computation**
 
-**Outstanding IMPORTANT findings** (not blockers for v0.3.0; tracked in task #16's "Outstanding" section): the central `paranoid_mode_blocked` toast still reads "Paranoid mode is on" (wording-only sweep), manifest size caps + allowlist not enforceable through plugin 2.10.1, placeholder pubkey has no startup guard, scheduler `last_checked_at` is in-memory only.
+- `trending::client::fetch` now hits `install` + `install-on-request` in parallel via `tokio::join!`; merges on package name
+- `trending::velocity::velocity_index(c30, c90, c365) → Option<f64>` — pure math, returns `None` on degenerate or too-small inputs
+- `commands::trending::trending_fetch` eager-warms all three windows via `tokio::task::JoinSet`; back-fills `velocity_index` on every entry from the cross-window join
+- `TrendingEntry` extended with optional `install_on_request_count{,_formatted}` + `velocity_index` (`skip_serializing_if = "Option::is_none"` for wire back-compat)
 
-### Issue #1 fixes (4 cascading bugs)
+**Step 3 — Opt-in history endpoint client + cache + IPCs**
 
-Spent ~6 hours debugging the toast cascade from issue #1. The chase:
-
-1. **Cache loop fix** (task #14 + `tasks/2026-05/14-issue-1-hunt-cache-loop.md`) — `PackageDetail`'s `isStarred` effect overloaded `"unknown"` as both the cache-miss sentinel AND the fetch-failure value, causing infinite IPC storms when failures happened. Distinct `"error"` variant ended the loop.
-2. **Toast architectural fix** (task #15 + `tasks/2026-05/15-github-integration-completion.md`) — even after the cache loop was gone, users could hit `effect_update_depth_exceeded` from the toast `$effect` itself. **Moved `toast.success` out of `$effect` and into the imperative call site in `signIn()` poll loop.** This is the officially-recommended Svelte 5 pattern: `$effect` is "an escape hatch" not "a side-effect channel."
-3. **Scope parser fix** — GitHub returns the OAuth `scope` field comma-separated (`"public_repo,read:user"`), not space-separated per RFC 6749. Our `split_whitespace()` parser produced a one-element array; the action gate's exact-match check failed. Now splits on both commas AND whitespace.
-4. **Watch scope** — GitHub's `PUT /repos/{o}/{r}/subscription` requires the `notifications` scope, NOT `public_repo`. Returns 404 (privacy-mask for "you don't have it") when missing. Added `notifications` to `GITHUB_OAUTH_SCOPES`.
-
-### GitHub integration polish (task #15)
-
-- **Per-action scope gate** — `authed_gate(required_scope)` parameterized. Each command passes its scope (`star/issue → public_repo`, `watch/unwatch → notifications`). Pre-empts the GitHub-returns-404 dance. **+2 new tests** (445 → 447) pin the per-action behavior.
-- **Actionable re-auth toast** — `Toast.action: { label, onClick }`. When an authed action fails with `ScopeRequired`, the toast offers a "Re-authorize" button that calls `signIn()`. GitHub's consent screen shows only the missing scope. New token replaces old in Keychain transparently. **No sign-out needed.**
-- **Octocat status chip** in title-bar — real Octocat from Primer/Octicons (MIT-licensed; Lucide strips brand icons). Green = signed-in with required scope, amber = signed-in but scope-incomplete, hidden = signed-out. Click → opens Settings → GitHub.
-- **Eager `loadStatus()` in `TitlebarControls.onMount`** — necessary for the chip to know its state on first paint. ⚠️ Re-introduces a Keychain ACL prompt on every dev-binary rebuild. **v0.3.0+ follow-up:** gate on a `localStorage["brew-browser:has-signed-in"]` flag so users who never sign in see zero Keychain prompts.
+- New module `trending::history::{mod, client, cache}`
+- `trending_history_index() → TrendingHistoryIndex` — summary blob (top-N with velocity + compact sparkline). Single fetch on Trending tab mount.
+- `trending_history_fetch(name, kind) → TrendingHistorySeries` — per-package full series. On-demand from PackageDetail.
+- Both gated by `require_enhanced_trending`; both follow the cache-hit / fetch / stale-fallback contract from v0.3.x
+- URL builder rejects path traversal (strict whitelist of `[A-Za-z0-9._+@-]`)
+- LRU per-package cache (cap 500, TTL 6h matching the nightly collector cadence)
+- 5 new types in `types.rs`: `TrendingHistorySource`, `TrendingHistoryPoint`, `TrendingHistorySeries`, `TrendingHistoryIndex`, `TrendingHistoryIndexEntry`
 
 ## Tests & lint (current)
 
-- `cargo test`: **473 passed**, 0 failed, 6 ignored (450 → 473, +23 new for GitHub resolution expansion: 14 `extract_github_repo` tests, 6 `resolve_github_homepage` tests, 6 `to_package` resolution tests minus 3 that overlap)
-- `cargo clippy --all-targets -- -D warnings`: clean
-- `cargo check`: clean
-- `npm run check`: 0 errors, 3 pre-existing warnings (SettingsSectionGitHub unused-CSS, tsconfig-node-types)
-- `npm run build`: clean
-- `bash -n tools/release/publish-manifest.sh`: clean
-- All diagnostic instrumentation reverted (no `[diag]` / `console.trace` left in code)
+- `cargo test`: **506 passed**, 0 failed, 6 ignored (473 → 506, +33 new)
+- `cargo build`: clean (no dead-code warnings — every new symbol is wired and exercised)
+- Frontend untouched in this checkpoint; `npm run check` posture unchanged from v0.3.1
 
-## Working tree (~30 files)
+## Working tree (8 modified + 4 new)
 
-**New (this session):**
-- `src/lib/components/GithubMarkIcon.svelte` (Octocat from Primer)
+**Modified (backend Steps 1–3):**
+- `src-tauri/src/commands/settings.rs` (+97)
+- `src-tauri/src/commands/trending.rs` (+283)
+- `src-tauri/src/error.rs` (+19)
+- `src-tauri/src/lib.rs` (+2)
+- `src-tauri/src/state.rs` (+121)
+- `src-tauri/src/trending/client.rs` (+300)
+- `src-tauri/src/trending/mod.rs` (+6)
+- `src-tauri/src/types.rs` (+114)
 
-**Modified (Phase 15):**
-- `src-tauri/{Cargo.toml,Cargo.lock,tauri.conf.json,capabilities/default.json,src/lib.rs,src/error.rs,src/state.rs,src/commands/mod.rs,src/commands/updater.rs,src/commands/settings.rs}`
-- `src/lib/{api.ts,types.ts,stores/updater.svelte.ts (new)}`
-- `src/lib/components/{UpdateIndicator.svelte (new),SettingsSectionUpdates.svelte (new),SettingsSectionNetwork.svelte,SettingsSectionGitHub.svelte}`
-- `src/routes/+page.svelte`
-- `BUILD.md`, `memory-bank/security.md`
-- New: `.gitleaks.toml`, `tools/release/publish-manifest.sh`, `memory-bank/phase15-plan.md`
+**New (backend Step 3):**
+- `src-tauri/src/trending/velocity.rs` (~115 lines)
+- `src-tauri/src/trending/history/mod.rs` (~22 lines)
+- `src-tauri/src/trending/history/client.rs` (~150 lines)
+- `src-tauri/src/trending/history/cache.rs` (~225 lines)
 
-**Modified (GitHub-integration session):**
-- `src-tauri/src/github/auth.rs` (scope parser fix + `notifications` scope)
-- `src-tauri/src/commands/github.rs` (per-action gate)
-- `src/lib/stores/{github.svelte.ts,toast.svelte.ts}`
-- `src/lib/components/{DeviceFlowModal.svelte,Toast.svelte,PackageDetail.svelte,TitlebarControls.svelte}`
-- `src/lib/components/PackageDetail.svelte` (cache-loop fix + showActionFailureToast)
+**New (memory bank):**
+- `memory-bank/tasks/2026-05/19-v0.4.0-backend.md`
 
-**Memory bank:**
-- New task records: `tasks/2026-05/{14-issue-1-hunt-cache-loop.md, 15-github-integration-completion.md}`
-- Updated: `tasks/2026-05/README.md`, `activeContext.md` (this file), `progress.md` (next), `NEXT-SESSION.md` (next), `toc.md` already updated last session
-- Moved (rename sweep last session, also in this commit): `memory-bank/{phase12-plan.md,phase13-plan.md} → memory-bank/phases/`; `memory-bank/scans/* → memory-bank/scans/2026-05-23/`
+## Decisions locked in this session (full rationale in task #19)
 
-**Untracked:**
-- `AGENTS.md`, `CLAUDE.md` (symlink) — intentional, your AI-workflow guide
-- `landing/screenshots/` (Phase 15 deploy artifacts)
+- **D1**: Subpath `brew-browser.zerologic.com/trending-history/*`, not a new vhost. Reuses Caddy + cert.
+- **D2**: GitHub mirror of nightly JSON deferred to v0.5+.
+- **D3**: Default sort by velocity desc + inline mini-sparklines per row (star-history.com aesthetic). Index blob carries compact sparkline arrays so the list renders from one fetch.
+- **D4**: Sparkline empty state when toggle is off = passive (only present in Settings → Network). No detail-panel placeholder, no banner.
+- **D5**: Velocity computed server-side, joined in `trending_fetch` from cached 30d/90d/365d windows. Frontend never knows the formula.
+
+## What's still ahead (PRD-side)
+
+- **Step 4** — Settings UI: new `SettingsSectionTrendingHistory.svelte` mounted at bottom of Network; new `pathStatuses` entry in `SettingsSectionNetwork.svelte`.
+- **Step 5** — Trending tab UI: velocity column, sort-by-velocity default, inline sparklines per row when enhanced trending is on.
+- **Step 6** — PackageDetail sparkline: new `TrendingSparkline.svelte` + new `trendingHistory.svelte.ts` store.
+- **Step 7** — umbp trending-collector: Bun TS daemon (`tools/trending-collector/`), seed.ts bootstrap, nightly cron, SQLite, static JSON output to `/home/michael/sites/brew-trending/`.
+- **Step 8** — Memory bank + docs: decisions.md ADR for opt-in trust boundary; projectbrief.md nine→ten paths; security.md endpoint audit; backendApi.md / frontendComponents.md / techContext.md updates; `docs/release-notes/0.4.0.md`; README disclosure update; cross-session memory pointers.
+- **Step 9** — Caddy privacy hardening: IP-strip at the proxy layer, no cookies, GET-only, cache-control, document the snippet in security.md.
+
+## Workflow change (durable)
+
+From this branch onward, all merges to `main` go through pull requests. Push the branch, open a PR via `gh pr create`, wait for review/CI, then merge. No more direct pushes to `main`.
 
 ## Memory bank inventory
 
-`toc.md`, `projectbrief.md`, `techContext.md`, `decisions.md`, `activeContext.md` (this), `progress.md`, `systemPatterns.md`, `designSystem.md`, `uxArchitecture.md`, `visualStory.md`, `backendApi.md`, `frontendComponents.md`, `codeReview.md`, `apiTests.md`, `accessibility.md`, `realityCheck.md`, `security.md`, `ideas.md`, `phase15-plan.md` (in-flight at top; 12+13 moved to `phases/`), `agentLog.md` (dormant), `NEXT-SESSION.md`, `tasks/2026-05/` (15 task records + README + deferred), `phases/`, `scans/2026-05-23/`.
+`toc.md`, `projectbrief.md`, `techContext.md`, `decisions.md`, `activeContext.md` (this), `progress.md`, `systemPatterns.md`, `designSystem.md`, `uxArchitecture.md`, `visualStory.md`, `backendApi.md`, `frontendComponents.md`, `codeReview.md`, `apiTests.md`, `accessibility.md`, `realityCheck.md`, `security.md`, `ideas.md`, `agentLog.md` (dormant), `NEXT-SESSION.md`, `tasks/2026-05/` (19 task records + README + deferred), `phases/`, `scans/2026-05-23/`.

@@ -76,6 +76,15 @@ pub enum BrewError {
     #[error("paranoid mode is enabled; outbound feature {feature} is blocked")]
     ParanoidModeBlocked { feature: String },
 
+    /// v0.4.0 — a per-feature opt-in toggle is off. Distinct from
+    /// [`Self::ParanoidModeBlocked`] because the cure is different:
+    /// flip the per-feature toggle in Settings → Network, not the master
+    /// Offline Mode switch. The `feature` field identifies which toggle
+    /// (e.g. `"trending_history"`) so the frontend can route the toast
+    /// to the right control.
+    #[error("feature {feature} is disabled; enable in Settings → Network")]
+    FeatureDisabled { feature: String },
+
     /// GitHub's REST API returned a rate-limit response (typically
     /// `403 Forbidden` with `X-RateLimit-Remaining: 0`). `reset_at` is
     /// the unix timestamp from the `X-RateLimit-Reset` header when the
@@ -389,6 +398,16 @@ mod tests {
         let v: Value = serde_json::to_value(&err).unwrap();
         assert_eq!(v["code"], "paranoid_mode_blocked");
         assert_eq!(v["feature"], "trending_fetch");
+    }
+
+    #[test]
+    fn feature_disabled_serializes_with_feature() {
+        let err = BrewError::FeatureDisabled {
+            feature: "trending_history".into(),
+        };
+        let v: Value = serde_json::to_value(&err).unwrap();
+        assert_eq!(v["code"], "feature_disabled");
+        assert_eq!(v["feature"], "trending_history");
     }
 
     #[test]

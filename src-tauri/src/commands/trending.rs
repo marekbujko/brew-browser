@@ -1,6 +1,6 @@
 //! Trending tab commands: `trending_fetch` and `trending_clear_cache`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use tauri::State;
@@ -9,8 +9,17 @@ use crate::commands::settings::{Settings, SettingsLoadState};
 use crate::error::BrewError;
 use crate::state::AppState;
 use crate::trending::cache::CachedTrending;
-use crate::trending::client;
+use crate::trending::{client, velocity};
 use crate::types::{TrendingReport, TrendingWindow};
+
+/// The three windows whose counts feed the velocity computation. Pinned
+/// here as a const so the cache-warmup loop and the velocity back-fill
+/// stay in lockstep.
+const ALL_WINDOWS: [TrendingWindow; 3] = [
+    TrendingWindow::D30,
+    TrendingWindow::D90,
+    TrendingWindow::D365,
+];
 
 /// Resolve the effective trending cache TTL from the persisted settings
 /// (Phase 12d). The cache itself is TTL-agnostic — freshness is decided
@@ -55,47 +64,158 @@ pub async fn trending_fetch(
         effective_trending_ttl(&guard)
     };
 
-    // 1. Short critical section: check cache freshness.
-    {
-        let cache = state.trending_cache.lock().await;
-        if let Some(cached) = cache.get(window) {
-            let age = cached.fetched_at.elapsed();
-            if age < ttl {
-                let mut report = cached.report.clone();
-                report.cache_age_seconds = age.as_secs();
-                return Ok(report);
-            }
-        }
-    }
-
-    // 2. Fetch.
     let installed_set = build_installed_set(&state).await;
-    let fetched = client::fetch(window, &installed_set).await;
 
-    match fetched {
-        Ok(report) => {
-            // 3. Insert into cache.
-            let mut cache = state.trending_cache.lock().await;
-            cache.put(
-                window,
-                CachedTrending {
-                    fetched_at: Instant::now(),
-                    report: report.clone(),
-                },
-            );
+    // v0.4.0 — ensure ALL THREE windows are cached so we can compute
+    // velocity_index for the returned entries. On a cold cache this
+    // triggers 6 parallel HTTP requests (3 windows × 2 endpoints,
+    // install + install-on-request). Subsequent calls within TTL hit
+    // cache for all three and skip the network entirely.
+    //
+    // Velocity is the headline feature of the Trending tab in v0.4.0,
+    // so eager warm-up is the right trade-off: 6× one-shot cost in
+    // exchange for "velocity is always available, never racing in
+    // after the user sees the list".
+    ensure_all_windows_cached(&state, &installed_set, ttl).await;
+
+    // Build the velocity map from whatever's cached. If any window's
+    // refresh failed (and we have no fallback), the map omits those
+    // packages and velocity stays None on their entries — degrades
+    // gracefully rather than failing the whole tab.
+    let velocity_map = build_velocity_map(&state).await;
+
+    // Now return the requested window. Critical: even if its cache
+    // entry is stale and the refresh in `ensure_all_windows_cached`
+    // failed, we still serve the stale data with a stale age — same
+    // fallback behaviour as v0.3.x.
+    let cache = state.trending_cache.lock().await;
+    match cache.get(window) {
+        Some(cached) => {
+            let mut report = cached.report.clone();
+            report.cache_age_seconds = cached.fetched_at.elapsed().as_secs();
+            // Back-fill velocity from the cross-window map.
+            for entry in &mut report.entries {
+                entry.velocity_index = velocity_map.get(&entry.name).copied().flatten();
+            }
             Ok(report)
         }
-        Err(e) => {
-            // 4. Fall back to stale cache if available.
-            let cache = state.trending_cache.lock().await;
-            if let Some(cached) = cache.get(window) {
-                let mut report = cached.report.clone();
-                report.cache_age_seconds = cached.fetched_at.elapsed().as_secs();
-                return Ok(report);
-            }
-            Err(e)
+        None => Err(BrewError::Network {
+            url: format!(
+                "https://formulae.brew.sh/api/analytics/install/{}.json",
+                window.as_path_segment()
+            ),
+            message: "all three window fetches failed".into(),
+        }),
+    }
+}
+
+/// v0.4.0 — fan out fetches for every window not currently fresh in
+/// cache. Soft-fails per-window so a transient 5xx on one doesn't
+/// poison the others. Updates the cache with whatever succeeded.
+async fn ensure_all_windows_cached(
+    state: &AppState,
+    installed: &HashSet<String>,
+    ttl: Duration,
+) {
+    // Quick scan under the lock — identify stale/missing windows.
+    let stale: Vec<TrendingWindow> = {
+        let cache = state.trending_cache.lock().await;
+        ALL_WINDOWS
+            .iter()
+            .copied()
+            .filter(|w| {
+                cache
+                    .get(*w)
+                    .is_none_or(|c| c.fetched_at.elapsed() >= ttl)
+            })
+            .collect()
+    };
+    if stale.is_empty() {
+        return;
+    }
+
+    // Fan out via JoinSet — each `client::fetch` already runs install
+    // + install-on-request in parallel, so 3 stale windows = 6
+    // concurrent requests. tokio's runtime handles the multiplexing.
+    // JoinSet (vs. `futures::future::join_all`) keeps us on the
+    // tokio-only dependency footprint and lets each task be cancelled
+    // independently if a future need arose.
+    let mut set: tokio::task::JoinSet<(TrendingWindow, Result<TrendingReport, BrewError>)> =
+        tokio::task::JoinSet::new();
+    for w in stale {
+        let installed_owned: HashSet<String> = installed.clone();
+        set.spawn(async move { (w, client::fetch(w, &installed_owned).await) });
+    }
+    let mut results: Vec<(TrendingWindow, Result<TrendingReport, BrewError>)> = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(pair) => results.push(pair),
+            Err(e) => eprintln!("[trending] window fetch task panicked: {e}"),
         }
     }
+
+    // Write successful results back to cache. Failed windows leave
+    // whatever stale entry was previously there (the fall-back-to-
+    // stale-on-error contract from v0.3.x).
+    let mut cache = state.trending_cache.lock().await;
+    for (w, res) in results {
+        match res {
+            Ok(report) => cache.put(
+                w,
+                CachedTrending {
+                    fetched_at: Instant::now(),
+                    report,
+                },
+            ),
+            Err(e) => {
+                eprintln!(
+                    "[trending] window {} fetch failed (keeping stale if present): {}",
+                    w.as_path_segment(),
+                    e
+                );
+            }
+        }
+    }
+}
+
+/// v0.4.0 — build a `name → Option<velocity_index>` map by joining
+/// install counts across whatever windows are in cache. Packages
+/// missing from any window get `None`. The `Option<Option<f64>>`
+/// flattening at the call site preserves the "missing entirely"
+/// vs "present but velocity_index could not be computed" distinction.
+async fn build_velocity_map(state: &AppState) -> HashMap<String, Option<f64>> {
+    let cache = state.trending_cache.lock().await;
+
+    let extract = |w: TrendingWindow| -> HashMap<String, u64> {
+        cache
+            .get(w)
+            .map(|c| {
+                c.report
+                    .entries
+                    .iter()
+                    .map(|e| (e.name.clone(), e.install_count))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let c30 = extract(TrendingWindow::D30);
+    let c90 = extract(TrendingWindow::D90);
+    let c365 = extract(TrendingWindow::D365);
+    drop(cache);
+
+    // Union of names present in all three maps — only join where we
+    // have data for every window.
+    let mut out = HashMap::with_capacity(c30.len());
+    for (name, count_30) in &c30 {
+        if let (Some(count_90), Some(count_365)) = (c90.get(name), c365.get(name)) {
+            out.insert(
+                name.clone(),
+                velocity::velocity_index(*count_30, *count_90, *count_365),
+            );
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -103,6 +223,103 @@ pub async fn trending_clear_cache(state: State<'_, AppState>) -> Result<(), Brew
     let mut cache = state.trending_cache.lock().await;
     cache.clear();
     Ok(())
+}
+
+// ---------- v0.4.0: Trending history (opt-in) ----------
+
+/// Fetch the trending-history summary blob (top-N packages with
+/// velocity index + compact sparkline). Frontend Trending tab calls
+/// this once on mount and uses the data to render inline sparklines
+/// per row without per-row HTTP.
+///
+/// Gated by [`AppState::require_enhanced_trending`] — fails closed
+/// with `ParanoidModeBlocked` if paranoid is on, with `FeatureDisabled`
+/// if the per-feature toggle is off. Falls back to stale cache on
+/// network failure (same contract as `trending_fetch`).
+#[tauri::command]
+pub async fn trending_history_index(
+    state: State<'_, AppState>,
+) -> Result<crate::types::TrendingHistoryIndex, BrewError> {
+    state.require_enhanced_trending().await?;
+
+    // Short critical section: serve fresh cache if available.
+    {
+        let cache = state.trending_history_cache.lock().await;
+        if cache.is_index_fresh() {
+            if let Some(cached) = cache.get_index() {
+                let mut index = cached.index.clone();
+                index.cache_age_seconds = cached.fetched_at.elapsed().as_secs();
+                return Ok(index);
+            }
+        }
+    }
+
+    // Fetch fresh.
+    match crate::trending::history::client::fetch_index().await {
+        Ok(index) => {
+            let mut cache = state.trending_history_cache.lock().await;
+            cache.put_index(index.clone());
+            Ok(index)
+        }
+        Err(e) => {
+            // Fall back to stale cache if any.
+            let cache = state.trending_history_cache.lock().await;
+            if let Some(cached) = cache.get_index() {
+                let mut index = cached.index.clone();
+                index.cache_age_seconds = cached.fetched_at.elapsed().as_secs();
+                return Ok(index);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Fetch the per-package trending-history series. PackageDetail's
+/// sparkline calls this on demand when the panel opens for a given
+/// package. Cached for 6h on a per-package LRU.
+#[tauri::command]
+pub async fn trending_history_fetch(
+    name: String,
+    kind: crate::types::PackageKind,
+    state: State<'_, AppState>,
+) -> Result<crate::types::TrendingHistorySeries, BrewError> {
+    state.require_enhanced_trending().await?;
+
+    let key = crate::trending::history::cache::HistoryKey {
+        name: name.clone(),
+        kind,
+    };
+
+    // Short critical section: serve fresh cache if available.
+    {
+        let cache = state.trending_history_cache.lock().await;
+        if cache.is_series_fresh(&key) {
+            if let Some(cached) = cache.get_series(&key) {
+                let mut series = cached.series.clone();
+                series.cache_age_seconds = cached.fetched_at.elapsed().as_secs();
+                return Ok(series);
+            }
+        }
+    }
+
+    // Fetch fresh.
+    match crate::trending::history::client::fetch_package(&name, kind).await {
+        Ok(series) => {
+            let mut cache = state.trending_history_cache.lock().await;
+            cache.put_series(key, series.clone());
+            Ok(series)
+        }
+        Err(e) => {
+            // Fall back to stale cache if any.
+            let cache = state.trending_history_cache.lock().await;
+            if let Some(cached) = cache.get_series(&key) {
+                let mut series = cached.series.clone();
+                series.cache_age_seconds = cached.fetched_at.elapsed().as_secs();
+                return Ok(series);
+            }
+            Err(e)
+        }
+    }
 }
 
 async fn build_installed_set(state: &AppState) -> HashSet<String> {
