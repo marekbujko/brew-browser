@@ -19,31 +19,41 @@
 /// Compute the implied 30-day velocity index for a package given its
 /// counts across the three published rolling windows.
 ///
-/// Returns `Some(ratio)` where:
-/// - `1.0` ≈ steady (recent monthly rate matches annual average)
-/// - `> 1.5` → surging (recent rate is 50%+ above annual average)
-/// - `< 0.7` → cooling (recent rate is 30%+ below annual average)
+/// Returns `Some(ratio)` where the recent 30-day install rate is
+/// compared against the **prior 11 months** (not the whole year —
+/// otherwise the recent month double-counts as part of the baseline,
+/// which makes brand-new packages always look 12× as fast as average):
+/// - `1.0` ≈ steady (recent month matches the prior 11 months' average)
+/// - `> 1.5` → surging
+/// - `< 0.7` → cooling
 ///
 /// Returns `None` when the inputs don't support a stable estimate:
-/// - `c365 == 0` (no historical data — nothing to compare against)
+/// - `c365 == 0` (no historical data)
 /// - `c365 < c90` or `c90 < c30` (rolling windows must be monotonic
-///   non-decreasing; a violation indicates the input is corrupt or
-///   the package was just renamed/added)
-/// - Annual monthly average is < 1.0 (package is too rarely installed
-///   for a stable ratio — small absolute numbers swing the ratio
-///   wildly, which is misinformation)
+///   non-decreasing; violation indicates corrupt input or a just-renamed
+///   package)
+/// - `c365 == c30` (package has zero history before the recent month —
+///   nothing to compare against). This is the load-bearing change vs
+///   the v0.4.0-beta formula: brand-new packages no longer dominate
+///   the leaderboard with the maximum 12.17 ratio.
+/// - Prior-11-month monthly average < 1.0 (too few absolute installs
+///   for a stable ratio)
 pub fn velocity_index(c30: u64, c90: u64, c365: u64) -> Option<f64> {
     if c365 == 0 || c365 < c90 || c90 < c30 {
         return None;
     }
-    // The 365-day window is ~12.17 months; normalize to per-month so
-    // the ratio is dimensionless and intuitive ("this month vs. avg
-    // month over the year").
-    let monthly_avg_annual = (c365 as f64) / (365.0 / 30.0);
-    if monthly_avg_annual < 1.0 {
+    // Installs in days 31..365 (the prior 11 months).
+    let older_installs = c365 - c30;
+    if older_installs == 0 {
         return None;
     }
-    Some((c30 as f64) / monthly_avg_annual)
+    // 335 days = 365 - 30. Normalize to per-30-day so the ratio is
+    // dimensionless and reads as "this month vs prior month-average."
+    let older_monthly_avg = (older_installs as f64) / (335.0 / 30.0);
+    if older_monthly_avg < 1.0 {
+        return None;
+    }
+    Some((c30 as f64) / older_monthly_avg)
 }
 
 #[cfg(test)]
@@ -54,27 +64,29 @@ mod tests {
     /// happened in the last 30 days.
     #[test]
     fn heating_returns_above_one_point_five() {
-        // 30d=400, 90d=500, 365d=600 — most of annual happened recently.
+        // 30d=400, 90d=500, 365d=600. Older = 200, older_monthly = 200/11.17 ≈ 17.9.
+        // Velocity = 400 / 17.9 ≈ 22.3 — strongly surging.
         let v = velocity_index(400, 500, 600).expect("stable");
         assert!(v > 1.5, "expected surging, got {v}");
     }
 
     /// A package fading: most of its annual installs were in the older
-    /// 275-day chunk.
+    /// 11-month chunk.
     #[test]
     fn cooling_returns_below_one() {
-        // 30d=10, 90d=100, 365d=1000 — 30d portion is only 1% of annual.
+        // 30d=10, 90d=100, 365d=1000. Older = 990, older_monthly ≈ 88.6.
+        // Velocity = 10 / 88.6 ≈ 0.11 — strongly cooling.
         let v = velocity_index(10, 100, 1000).expect("stable");
         assert!(v < 0.5, "expected cooling well below 1.0, got {v}");
     }
 
-    /// A package steady over the year: the 30d window should be ~1/12
-    /// of the 365d window. Velocity index should round near 1.0.
+    /// A package with a steady install rate over the year: the recent
+    /// 30 days should match the prior 11-month per-30-day average.
     #[test]
     fn steady_returns_near_one() {
-        // 30d=100, 90d=300, 365d=1200 — perfectly steady rate.
+        // 30d=100, 90d=300, 365d=1200. Older = 1100, older_monthly = 1100/11.17 ≈ 98.5.
+        // Velocity = 100 / 98.5 ≈ 1.015.
         let v = velocity_index(100, 300, 1200).expect("stable");
-        // 1200 / (365/30) ≈ 98.63 → 100 / 98.63 ≈ 1.0139
         assert!(
             (v - 1.0).abs() < 0.1,
             "expected ~1.0 for steady rate, got {v}"
@@ -103,21 +115,34 @@ mod tests {
     /// ratio to be meaningful).
     #[test]
     fn returns_none_on_too_few_installs() {
-        // 365d count of 10 → monthly avg of 10/12.17 ≈ 0.82 < 1.0 → None.
+        // 30d=4, 90d=7, 365d=10. Older = 6, older_monthly = 6/11.17 ≈ 0.54 < 1.0 → None.
         assert!(velocity_index(4, 7, 10).is_none());
+    }
+
+    /// **Load-bearing fix:** brand-new packages where c30 == c365 used
+    /// to return the maximum-possible 12.17 velocity (because the
+    /// "annual baseline" was identical to the recent month). The new
+    /// formula requires non-zero installs in days 31..365 — a
+    /// brand-new package has zero, so it correctly returns None and
+    /// stays out of the velocity leaderboard.
+    #[test]
+    fn returns_none_when_brand_new_package_has_no_prior_history() {
+        // c30 == c90 == c365 → no prior history. Used to be a 12.17.
+        assert!(velocity_index(59, 59, 59).is_none());
+        assert!(velocity_index(195, 195, 195).is_none());
+        assert!(velocity_index(2535, 2535, 2535).is_none());
     }
 
     /// Reasonable mid-tier package — exercises the normal path. Pinned
     /// to keep the formula honest if anyone refactors.
     #[test]
     fn typical_package_with_modest_growth() {
-        // 30d=120, 90d=300, 365d=1000.
-        // Monthly avg annual = 1000 / 12.17 ≈ 82.19.
-        // Velocity = 120 / 82.19 ≈ 1.46. Slightly surging, not quite hot.
+        // 30d=120, 90d=300, 365d=1000. Older = 880, older_monthly = 880/11.17 ≈ 78.8.
+        // Velocity = 120 / 78.8 ≈ 1.523.
         let v = velocity_index(120, 300, 1000).expect("stable");
         assert!(
-            (1.4..1.5).contains(&v),
-            "expected ~1.46 for the documented inputs, got {v}"
+            (1.4..1.6).contains(&v),
+            "expected ~1.52 for the documented inputs, got {v}"
         );
     }
 }

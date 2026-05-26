@@ -38,42 +38,42 @@ That's it. No Rust, no Python, no transpilation.
 The canonical deploy target is `brew-browser.zerologic.com`. Layout:
 
 ```
-/home/michael/sites/brew-trending-collector/    ← this code (clone of tools/trending-collector)
+/home/michael/Sites/brew-trending-collector/    ← this code (clone of tools/trending-collector)
 /home/michael/data/brew-trending/db.sqlite      ← SQLite state, persists across deploys
-/home/michael/sites/brew-trending/              ← static JSON output (served by Caddy)
+/home/michael/Sites/brew-trending/              ← static JSON output (served by Caddy)
 ```
 
 ### 1. First deploy (one-time)
 
 ```sh
 # On brew-browser.zerologic.com:
-mkdir -p /home/michael/sites/brew-trending-collector
+mkdir -p /home/michael/Sites/brew-trending-collector
 mkdir -p /home/michael/data/brew-trending
-mkdir -p /home/michael/sites/brew-trending
+mkdir -p /home/michael/Sites/brew-trending
 
 # Sync the code (from your local checkout):
 rsync -av --delete \
   --exclude=node_modules --exclude=state --exclude=out \
   tools/trending-collector/ \
-  brew-browser.zerologic.com:/home/michael/sites/brew-trending-collector/
+  brew-browser.zerologic.com:/home/michael/Sites/brew-trending-collector/
 
 # Install deps on the box:
 ssh brew-browser.zerologic.com \
-  'cd /home/michael/sites/brew-trending-collector && npm ci --omit=dev'
+  'cd /home/michael/Sites/brew-trending-collector && npm ci --omit=dev'
 
 # Bootstrap the DB with today's seed buckets:
 ssh brew-browser.zerologic.com \
-  'cd /home/michael/sites/brew-trending-collector && \
+  'cd /home/michael/Sites/brew-trending-collector && \
    DB_PATH=/home/michael/data/brew-trending/db.sqlite \
-   OUT_DIR=/home/michael/sites/brew-trending \
+   OUT_DIR=/home/michael/Sites/brew-trending \
    node seed.js'
 
 # Trigger an initial collect so the JSON tree exists immediately
 # (the cron runs once a night, but day-0 needs a kick):
 ssh brew-browser.zerologic.com \
-  'cd /home/michael/sites/brew-trending-collector && \
+  'cd /home/michael/Sites/brew-trending-collector && \
    DB_PATH=/home/michael/data/brew-trending/db.sqlite \
-   OUT_DIR=/home/michael/sites/brew-trending \
+   OUT_DIR=/home/michael/Sites/brew-trending \
    node collect.js'
 ```
 
@@ -83,7 +83,7 @@ Add to `crontab -e` on `brew-browser.zerologic.com`:
 
 ```cron
 # Nightly trending-history collection — 03:00 server time.
-0 3 * * * cd /home/michael/sites/brew-trending-collector && DB_PATH=/home/michael/data/brew-trending/db.sqlite OUT_DIR=/home/michael/sites/brew-trending /usr/bin/node collect.js >> /var/log/brew-trending-collector.log 2>&1
+0 3 * * * cd /home/michael/Sites/brew-trending-collector && DB_PATH=/home/michael/data/brew-trending/db.sqlite OUT_DIR=/home/michael/Sites/brew-trending /usr/bin/node collect.js >> /var/log/brew-trending-collector.log 2>&1
 ```
 
 Adjust `/usr/bin/node` to match the actual Node binary path (`which node`).
@@ -99,11 +99,11 @@ Adjust `/usr/bin/node` to match the actual Node binary path (`which node`).
 rsync -av --delete \
   --exclude=node_modules --exclude=state --exclude=out \
   tools/trending-collector/ \
-  brew-browser.zerologic.com:/home/michael/sites/brew-trending-collector/
+  brew-browser.zerologic.com:/home/michael/Sites/brew-trending-collector/
 
 # Re-install if package.json changed:
 ssh brew-browser.zerologic.com \
-  'cd /home/michael/sites/brew-trending-collector && npm ci --omit=dev'
+  'cd /home/michael/Sites/brew-trending-collector && npm ci --omit=dev'
 ```
 
 The DB and JSON output dirs are outside this directory tree so they survive deploys cleanly.

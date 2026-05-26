@@ -73,7 +73,7 @@ Serialize concurrent `brew` invocations using a `tokio::sync::Mutex<()>` in Taur
 - `/trending-history/index.json` — summary blob (top-500 packages with server-precomputed velocity index + ~30-point compact sparkline). Fetched once on Trending tab mount; powers inline row sparklines.
 - `/trending-history/{kind}/{name}.json` — per-package full series. Fetched on demand from PackageDetail.
 
-**Collector:** `tools/trending-collector/` — plain Node 20+ ESM cron job that lives on `brew-browser.zerologic.com`. Runs nightly at 03:00 server time, hits the 12 (4 categories × 3 windows) formulae.brew.sh endpoints concurrently, appends rows to `/home/michael/data/brew-trending/db.sqlite` (composite-PK so re-runs are no-ops), then regenerates the static JSON tree at `/home/michael/sites/brew-trending/` for Caddy to serve.
+**Collector:** `tools/trending-collector/` — plain Node 20+ ESM cron job that lives on `brew-browser.zerologic.com`. Runs nightly at 03:00 server time, hits the 12 (4 categories × 3 windows) formulae.brew.sh endpoints concurrently, appends rows to `/home/michael/data/brew-trending/db.sqlite` (composite-PK so re-runs are no-ops), then regenerates the static JSON tree at `/home/michael/Sites/brew-trending/` for Caddy to serve.
 
 **Day-zero seed trick:** the bootstrap (`seed.js`) derives three historical "buckets" per package from rolling-window subtraction (c30, c90-c30, c365-c90), tagged `source='seed'`, so charts have data the day the collector turns on. From day 1 onward the nightly collector accumulates real daily snapshots; after ~30 days, adjacent-day `count_30d` subtraction produces clean per-day install estimates that dominate the chart visually.
 

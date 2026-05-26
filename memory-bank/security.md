@@ -667,7 +667,7 @@ Every other outbound path in the projectbrief enumeration targets a third party 
 
 ### 16.2 Server-side data practice
 
-The endpoint serves static JSON from Caddy on `brew-browser.zerologic.com`. The deploy lives at `/home/michael/sites/brew-trending/` with the collector (`tools/trending-collector/`) regenerating the JSON tree nightly via cron.
+The endpoint serves static JSON from Caddy on `brew-browser.zerologic.com`. The deploy lives at `/home/michael/Sites/brew-trending/` with the collector (`tools/trending-collector/`) regenerating the JSON tree nightly via cron.
 
 **Caddyfile block** for the `/trending-history/*` subpath on the existing `brew-browser.zerologic.com` vhost:
 
@@ -676,7 +676,7 @@ brew-browser.zerologic.com {
     # ... existing updater manifest block ...
 
     handle_path /trending-history/* {
-        root * /home/michael/sites/brew-trending
+        root * /home/michael/Sites/brew-trending
         file_server browse
 
         # Privacy: redact client IP at the access-log layer. Without

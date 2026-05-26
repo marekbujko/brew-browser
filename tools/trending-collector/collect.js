@@ -32,7 +32,7 @@ const OUT_DIR =
   process.env.OUT_DIR ??
   resolve(__dirname, "out");
 // On the deploy target (brew-browser.zerologic.com) this should be set
-// to `/home/michael/sites/brew-trending/` via the cron line so the
+// to `/home/michael/Sites/brew-trending/` via the cron line so the
 // JSON tree lands where Caddy can serve it.
 
 async function main() {

@@ -80,15 +80,30 @@ export function openDb(dbPath) {
 
 /**
  * Implied 30-day velocity index. 1.0 = steady, >1.5 surging, <0.7 cooling.
- * Returns `null` on degenerate or too-small inputs — matches the Rust
- * implementation byte-for-byte so server-precomputed and client-computed
- * values agree.
+ *
+ * Compares the recent 30 days against the **prior 11 months** (days
+ * 31..365), not the whole 365-day window — otherwise the recent month
+ * double-counts as part of the baseline and brand-new packages get
+ * the maximum-possible 12.17 ratio regardless of whether they're
+ * actually trending.
+ *
+ * Returns `null` on degenerate inputs:
+ *   - c365 == 0 (no historical data)
+ *   - non-monotonic windows
+ *   - c365 == c30 (brand-new package, no prior history)
+ *   - prior-11-month monthly average < 1.0 (too few absolute installs)
+ *
+ * Matches the Rust implementation byte-for-byte so server-precomputed
+ * and client-computed values agree.
  */
 export function velocityIndex(c30, c90, c365) {
   if (c365 === 0 || c365 < c90 || c90 < c30) return null;
-  const monthlyAvgAnnual = c365 / (365.0 / 30.0);
-  if (monthlyAvgAnnual < 1.0) return null;
-  return c30 / monthlyAvgAnnual;
+  const olderInstalls = c365 - c30;
+  if (olderInstalls === 0) return null;
+  // 335 days = 365 - 30. Normalize to per-30-day.
+  const olderMonthlyAvg = olderInstalls / (335.0 / 30.0);
+  if (olderMonthlyAvg < 1.0) return null;
+  return c30 / olderMonthlyAvg;
 }
 
 // ---------- HTTP ----------
@@ -96,11 +111,19 @@ export function velocityIndex(c30, c90, c365) {
 /** Fetch one (category, window) endpoint's JSON. Returns the parsed
  *  body. Throws on non-2xx or timeout. */
 export async function fetchAnalyticsPayload(category, window) {
-  // Map our internal category name to the URL path segment. Brew's URL
-  // uses hyphens; our DB enum uses underscores so the column name is
-  // a clean SQL identifier.
+  // Map our internal category name to the URL path segment + the
+  // optional tap-repo segment. Per the formulae.brew.sh API pattern
+  // (`/api/analytics/{category}/{repo}/${DAYS}.json`), `install` /
+  // `install-on-request` / `build-error` default to homebrew-core
+  // when the repo segment is omitted, but `cask-install` needs the
+  // `homebrew-cask` segment explicitly — otherwise the no-segment
+  // URL returns an aggregated shape that doesn't expose the
+  // per-cask counts we need.
   const seg = category.replaceAll("_", "-");
-  const url = `${FORMULAE_HOST}/${seg}/${window}.json`;
+  const url =
+    category === "cask_install"
+      ? `${FORMULAE_HOST}/${seg}/homebrew-cask/${window}.json`
+      : `${FORMULAE_HOST}/${seg}/${window}.json`;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
@@ -127,9 +150,17 @@ export function parseCount(s) {
 }
 
 /** Extract the flat items array from the brew analytics JSON shape.
- *  Handles both the live `{ items: [...] }` shape and the documented-
- *  but-not-actually-served `{ formulae: { name: [...] } }` legacy
- *  shape, matching the Rust client's defensive deserialization. */
+ *  Handles all three observed shapes:
+ *
+ *  1. `{ items: [{ formula, count, number }, ...] }` — install +
+ *     install-on-request endpoints' live shape
+ *  2. `{ formulae: { name: [{ formula, count }] } }` — older documented
+ *     shape; the Rust client keeps this fallback too
+ *  3. `{ formulae: { name: [{ cask, count }] } }` — cask-install
+ *     endpoint's shape (note the `cask:` field instead of `formula:`)
+ *
+ *  Normalizes case (3) into the canonical `{ formula, count, number }`
+ *  shape so downstream code only needs one field name. */
 export function extractItems(payload) {
   if (Array.isArray(payload?.items) && payload.items.length > 0) {
     return payload.items;
@@ -137,7 +168,16 @@ export function extractItems(payload) {
   if (payload?.formulae && typeof payload.formulae === "object") {
     return Object.values(payload.formulae)
       .map((arr) => (Array.isArray(arr) ? arr[0] : null))
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((item) => {
+        // Normalize the cask-install field name. `item.cask` may be
+        // present instead of `item.formula`; copy it across so the
+        // consumer's `item.formula` check works uniformly.
+        if (item && !item.formula && item.cask) {
+          return { ...item, formula: item.cask };
+        }
+        return item;
+      });
   }
   return [];
 }

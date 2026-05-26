@@ -29,32 +29,32 @@ Then **execute Step 9** on `brew-browser.zerologic.com`:
    rsync -av --delete \
      --exclude=node_modules --exclude=state --exclude=out \
      tools/trending-collector/ \
-     brew-browser.zerologic.com:/home/michael/sites/brew-trending-collector/
+     brew-browser.zerologic.com:/home/michael/Sites/brew-trending-collector/
    ssh brew-browser.zerologic.com \
-     'cd /home/michael/sites/brew-trending-collector && npm ci --omit=dev'
+     'cd /home/michael/Sites/brew-trending-collector && npm ci --omit=dev'
    ```
 
 2. **Bootstrap the DB** (one-shot — `seed.js` refuses to run twice):
    ```sh
    ssh brew-browser.zerologic.com \
-     'cd /home/michael/sites/brew-trending-collector && \
+     'cd /home/michael/Sites/brew-trending-collector && \
       DB_PATH=/home/michael/data/brew-trending/db.sqlite \
-      OUT_DIR=/home/michael/sites/brew-trending \
+      OUT_DIR=/home/michael/Sites/brew-trending \
       node seed.js'
    ```
 
 3. **Run an initial collect** so the JSON tree exists immediately (cron is nightly; day-0 needs a manual kick):
    ```sh
    ssh brew-browser.zerologic.com \
-     'cd /home/michael/sites/brew-trending-collector && \
+     'cd /home/michael/Sites/brew-trending-collector && \
       DB_PATH=/home/michael/data/brew-trending/db.sqlite \
-      OUT_DIR=/home/michael/sites/brew-trending \
+      OUT_DIR=/home/michael/Sites/brew-trending \
       node collect.js'
    ```
 
 4. **Add the cron line** (`crontab -e` on the box):
    ```
-   0 3 * * * cd /home/michael/sites/brew-trending-collector && DB_PATH=/home/michael/data/brew-trending/db.sqlite OUT_DIR=/home/michael/sites/brew-trending /usr/bin/node collect.js >> /var/log/brew-trending-collector.log 2>&1
+   0 3 * * * cd /home/michael/Sites/brew-trending-collector && DB_PATH=/home/michael/data/brew-trending/db.sqlite OUT_DIR=/home/michael/Sites/brew-trending /usr/bin/node collect.js >> /var/log/brew-trending-collector.log 2>&1
    ```
    Adjust `/usr/bin/node` per `which node`.
 
