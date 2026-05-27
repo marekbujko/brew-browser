@@ -341,7 +341,6 @@
   /** Donut hover state. Set by mouseenter on a slice OR a legend row;
    *  cleared on mouseleave. Drives:
    *    - slice highlight (hovered segment fattens, others dim)
-   *    - center-text takeover ("325 / installed" → "{count} / {label}")
    *    - legend row visual indication
    *
    *  Keyboard accessibility: focus-on-slice could also drive this in a
@@ -349,9 +348,6 @@
    *  carry the click affordance, so keyboard users get the count from
    *  the always-visible legend columns. */
   let hoveredCategory = $state<string | null>(null);
-  let hoveredSegment = $derived(
-    hoveredCategory ? categorySegments.find((s) => s.slug === hoveredCategory) : null,
-  );
 
   function jumpToCategory(slug: string) {
     if (slug === "__other__") {
@@ -660,13 +656,6 @@
                   <title>{s.label}: {fmt(s.count)} ({s.pct.toFixed(1)}%)</title>
                 </circle>
               {/each}
-              {#if hoveredSegment}
-                <text x="60" y="58" text-anchor="middle" class="donut-total">{fmt(hoveredSegment.count)}</text>
-                <text x="60" y="74" text-anchor="middle" class="donut-label donut-label--hover">{hoveredSegment.label}</text>
-              {:else}
-                <text x="60" y="58" text-anchor="middle" class="donut-total">{fmt(counts.total)}</text>
-                <text x="60" y="74" text-anchor="middle" class="donut-label">installed</text>
-              {/if}
             </svg>
             <ul class="donut-legend">
               {#each categorySegments as s (s.slug)}
@@ -1005,18 +994,6 @@
     stroke: var(--color-surface-sunken);
     stroke-width: 20;
   }
-  .donut-total {
-    font-size: 18px;
-    font-weight: var(--fw-semibold);
-    fill: var(--color-text-primary);
-  }
-  .donut-label {
-    font-size: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    fill: var(--color-text-muted);
-  }
-
   .donut-legend { display: flex; flex-direction: column; gap: 4px; }
   .legend-row {
     display: grid;
@@ -1045,11 +1022,6 @@
   }
   .donut-slice--dim {
     opacity: 0.35;
-  }
-  /* Hover-mode label uses the same fill as the static "installed" but
-     could shift accent color if we wanted a stronger signal later. */
-  .donut-label--hover {
-    fill: var(--color-text-secondary);
   }
   @media (prefers-reduced-motion: reduce) {
     .donut-slice { transition: none; }
