@@ -1,16 +1,26 @@
 # Active Context
 
-**Date:** 2026-05-30 (v0.5.0 shipped + launched on r/MacOS; Homebrew tap live)
-**State:** v0.5.0 is released. Debuted on r/MacOS (Saturday — the day app posts are allowed there): ~4.1K views, 80%+ upvote ratio, engaged comments, +stars. Post-launch work landed: issue #8 fix (window draggable while Settings open, merged), a Linux-support branch (committed, not merged — `feat/linux-support`, verified building+running on arm64 Ubuntu), and a **Homebrew tap** so users can `brew install`.
+**Date:** 2026-05-30 EOD (v0.5.0 launched big; Homebrew tap live; post-launch fixes shipped)
+**State:** v0.5.0 released and **launched successfully on r/MacOS (Saturday — the only day app posts are allowed there)**. Final launch numbers: **29 → 128 stars in one day**; r/MacOS post 300↑ @ 92.6%, r/MacOSApps post 106↑ @ 97.3% (the predecessor closed-source "Homebrew Store" post that triggered this whole project was deleted by its author at 65%). Post-launch work all landed: issue #8 fix (merged, PR #10), Homebrew tap (live), docs across README/landing/memory-bank (merged, PR #11), landing site redeployed to the server (was stale at v0.3.0, now v0.5.0). First external contributor PR (#15) reviewed.
 
 ## Repo
 
 - **github.com/msitarzewski/brew-browser** — public, MIT
 - **Released:** v0.1.0 → v0.5.0 (live on GitHub Releases — `gh release list`)
-- **Tap:** `github.com/msitarzewski/homebrew-brew-browser` — `brew tap msitarzewski/brew-browser && brew install --cask brew-browser` (live, audited, fetch-verified)
-- **Branch:** `main` (open: docs/brew-tap-install PR #11; feat/linux-support committed, unmerged by choice)
-- **Stars:** ~45 (climbing post-launch)
-- **Open issues of note:** #8 fixed (PR #10 merged). MacPorts backend requested on Reddit (scoped: core ops portable, trending/vulns/snapshots have no MacPorts equivalent).
+- **Tap:** `github.com/msitarzewski/homebrew-brew-browser` — `brew tap msitarzewski/brew-browser && brew install --cask brew-browser` (live, `auto_updates true`, audit-clean, fetch-verified). README + landing now **recommend the direct .dmg**, cask kept as a full second option.
+- **Branch:** `main`. `feat/linux-support` committed (`282d8ff`) but **intentionally unmerged** (user wanted a commit, not a merge yet).
+- **Stars:** **128** (was 29 at start of day) — now **past the 75 official-homebrew-cask notability bar** (still under the 225 self-submit bar; the "great fanfare" exception is now realistic).
+- **Open PRs:** #15 (external contributor — "Installed by User" cask detection + force-override). Reviewed COMMENTED: detection + UX praised, blocker = a `std::fs::remove_file` sweep of the Homebrew prefix violating the app's "we never delete outside our data dir; brew owns the prefix" invariant. Path to merge given (drop the rm block, rely on the `--force` it already passes). Ball in contributor's court.
+
+## Carry-forward / next-session candidates
+
+- **Official homebrew-cask submission** — now unblocked (128★ > 75). Self-submit hits the higher 225★ bar, so the play is either a non-author submitter or leaning on the "recently released to great fanfare" exception while the launch is hot. User leans dmg-preferred but keeps the cask; this is additive.
+- **Cask version/sha256 auto-bump** in `tools/release/` — still a TODO; manual `shasum` + edit each release until built. Now a hard requirement (user wants the cask bumped every release).
+- **feat/linux-support** — committed, unmerged. Verified building+running on arm64 Ubuntu 26.04 in a Parallels VM ("Scratch", 10.211.55.6, sshable as `scratch` / `scratch-m`). Decide if/when to merge + whether to ship Linux artifacts.
+- **Title-bar / UX redesign** — scoped with user (Option A: standard macOS title bar, drop the in-window vibrancy/overlay; move tools to sidebar bottom; kill panel-title row). NOT built — parked as premature during launch.
+- **Known dead control:** the Settings → Appearance "Window vibrancy" dropdown is dead-wired (backend hardcodes HudWindow, never reads the pref). Slated for removal in the title-bar redesign.
+- **MacPorts backend** — requested on Reddit. Scoped: core package ops portable, but trending/vulns/snapshots/enrichment have no MacPorts equivalent → would be a partial second backend, not parity. Open an issue if pursuing.
+- **PR #9 (Linux)** was closed (user wanted commit not PR); branch + commit remain.
 
 ## v0.5.0 shipped on the branch (Steps 1–8)
 
