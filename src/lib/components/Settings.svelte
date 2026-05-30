@@ -174,7 +174,14 @@
 <style>
   .scrim {
     position: fixed;
-    inset: 0;
+    /* Start below the 36px window title bar (the macOS drag region) so
+       the window stays movable while Settings is open. A full `inset: 0`
+       scrim covers the title bar's `data-tauri-drag-region`, swallowing
+       the mousedown macOS needs to begin a window drag — so the window
+       was stuck until Settings closed (issue #8). Leaving the title bar
+       uncovered also matches native macOS, where the title bar stays at
+       full opacity while a sheet is open. */
+    inset: 36px 0 0 0;
     background: rgb(0 0 0 / 0.4);
     z-index: 90;
     animation: fadeIn var(--motion-duration-base) var(--motion-ease-out);
