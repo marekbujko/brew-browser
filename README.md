@@ -36,11 +36,18 @@ A global Cmd+K command palette covers the verbs. Cmd+0 returns to the Dashboard;
 
 ## Install (end users)
 
-Download the latest signed + notarized `.dmg` from the [releases page](https://github.com/msitarzewski/brew-browser/releases/latest), open it, and drag **brew-browser** to your Applications folder. No Gatekeeper warning — the build is signed with a Developer ID Application certificate and notarized by Apple.
+**Direct download (recommended):** grab the latest signed + notarized `.dmg` from the [releases page](https://github.com/msitarzewski/brew-browser/releases/latest), open it, and drag **brew-browser** to your Applications folder. No Gatekeeper warning. This is the build that's signed and tested directly each release, and it keeps you on the app's own verified updater (Settings → Network → Updates).
+
+**Homebrew:**
+
+```sh
+brew tap msitarzewski/brew-browser
+brew install --cask brew-browser
+```
+
+Installs the same notarized `.dmg`. Update later with `brew upgrade --cask brew-browser`.
 
 Apple Silicon only for now. macOS 13 (Ventura) or newer.
-
-A `brew tap` for one-line install is on the roadmap.
 
 ## Build from source
 

@@ -811,3 +811,16 @@ Regression-pinned by `vulns::client::tests::raw_scan_result_parses_real_brew_vul
 
 - Open the PR for `feat/v0.5.0-vulnerability-scanning` → review → merge.
 - Cut the v0.5.0 release via the standard pipeline (same as v0.4.0).
+
+## 2026-05-30 (launch day + Homebrew tap)
+
+- ✅ **v0.5.0 launched on r/MacOS** (Saturday = the only day app posts are allowed there). Reposted as image-first after a text-only attempt underperformed. ~4.1K views in 48h, 80%+ upvote ratio (the predecessor "Homebrew Store" post was deleted by its author at 65%), engaged comments. Stars climbing (~45).
+- ✅ **Issue #8 fixed** — window unmovable while Settings open. Root cause: the Settings scrim (`inset: 0`) covered the 36px title-bar `data-tauri-drag-region`, swallowing the mousedown macOS needs to start a drag. Fix: `inset: 36px 0 0 0`. PR #10, merged. Reported by @unluckyquote.
+- ✅ **Linux support** — `feat/linux-support` branch (committed `282d8ff`, **not merged** by choice). keyring per-target features, Linuxbrew path detection, brew-cwd hardening (`exec.rs` pins cwd to `/`), xdg-open reveal, cask_icon cfg-gating, macOS-only menu, platform-aware labels, CI workflow. Verified building + running on arm64 Ubuntu 26.04 in a Parallels VM.
+- ✅ **Homebrew tap** — new repo `msitarzewski/homebrew-brew-browser` with `Casks/brew-browser.rb` (signed/notarized .dmg, v0.5.0, sha256 verified). `brew tap msitarzewski/brew-browser && brew install --cask brew-browser`. `brew audit` exit 0, `brew fetch` sha256-verified. README + landing + projectbrief + decisions ADR (2026-05-30) updated.
+
+### TODOs surfaced
+- Cask `version`/`sha256` auto-bump in `tools/release/` (manual each release until then).
+- Official `Homebrew/homebrew-cask` submission once past 75★.
+- Title-bar/UX redesign (scoped with user, Option A: standard title bar, drop vibrancy) — not built; premature, parked.
+- From-source `--HEAD` formula — deferred experiment; only ever on explicit user request.

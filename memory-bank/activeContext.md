@@ -1,15 +1,16 @@
 # Active Context
 
-**Date:** 2026-05-27 (v0.5.0 ready for PR / review — post-smoke-test cycle)
-**State:** All 8 steps of the v0.5.0 plan complete on branch `feat/v0.5.0-vulnerability-scanning`, PLUS a 5-bug smoke-test cycle that surfaced and resolved every subprocess-integration assumption that was wrong. Opt-in vulnerability scanning via `brew vulns` ships behind a per-feature Settings toggle, with the install-set fingerprint optimisation, optional GHSA enrichment when GitHub auth is on, and the full UI surface (Settings card + Dashboard Exposure card + Sidebar count badge + PackageRow severity dot + PackageDetail Security card). Awaiting PR + merge + release cut.
+**Date:** 2026-05-30 (v0.5.0 shipped + launched on r/MacOS; Homebrew tap live)
+**State:** v0.5.0 is released. Debuted on r/MacOS (Saturday — the day app posts are allowed there): ~4.1K views, 80%+ upvote ratio, engaged comments, +stars. Post-launch work landed: issue #8 fix (window draggable while Settings open, merged), a Linux-support branch (committed, not merged — `feat/linux-support`, verified building+running on arm64 Ubuntu), and a **Homebrew tap** so users can `brew install`.
 
 ## Repo
 
 - **github.com/msitarzewski/brew-browser** — public, MIT
-- **Released:** v0.1.0, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0 (live on GitHub Releases — `gh release list`)
-- **Working toward:** v0.5.0 (branch ready; PR follows docs commit)
-- **Branch:** `feat/v0.5.0-vulnerability-scanning`
-- **Stars:** 18+ (as of v0.4.0 ship)
+- **Released:** v0.1.0 → v0.5.0 (live on GitHub Releases — `gh release list`)
+- **Tap:** `github.com/msitarzewski/homebrew-brew-browser` — `brew tap msitarzewski/brew-browser && brew install --cask brew-browser` (live, audited, fetch-verified)
+- **Branch:** `main` (open: docs/brew-tap-install PR #11; feat/linux-support committed, unmerged by choice)
+- **Stars:** ~45 (climbing post-launch)
+- **Open issues of note:** #8 fixed (PR #10 merged). MacPorts backend requested on Reddit (scoped: core ops portable, trending/vulns/snapshots have no MacPorts equivalent).
 
 ## v0.5.0 shipped on the branch (Steps 1–8)
 
