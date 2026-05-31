@@ -74,6 +74,12 @@ pub fn run() {
         // Offline Mode kills the path even though the plugin itself
         // would otherwise try the manifest endpoint.
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Issue #17 — persist the window's size + position across launches.
+        // The plugin auto-saves geometry when the window is moved/resized and
+        // on exit, then restores it on the next launch. Default StateFlags
+        // cover size + position (plus maximized/fullscreen) — exactly what the
+        // issue asks for. No frontend wiring: registration is the feature.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .menu(build_app_menu)
         .on_menu_event(handle_menu_event)
         .setup(|app| {
