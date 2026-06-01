@@ -213,11 +213,15 @@ public actor GitHubService {
     /// network. Mirrors `auth::status` / `status_with` (`auth.rs:324-348`)
     /// and the `github_status` command (`github.rs:96-101`).
     public func status() -> GithubStatus {
-        guard Self.keychainRead(account: Self.accountToken) != nil else {
-            return .signedOut
-        }
-        let username = Self.keychainRead(account: Self.accountUsername)
-        let scopes = Self.decodeScopes(Self.keychainRead(account: Self.accountScopes))
+        // Single batch Keychain read for all three accounts (token / username /
+        // scopes) instead of three separate SecItemCopyMatching calls — each
+        // call is its own Keychain access and prompts separately, so reading
+        // them one-by-one triggered three consecutive prompts at launch. One
+        // query for the whole service = one access. No schema change.
+        let all = Self.keychainReadAll()
+        guard all[Self.accountToken] != nil else { return .signedOut }
+        let username = all[Self.accountUsername]
+        let scopes = Self.decodeScopes(all[Self.accountScopes])
         return GithubStatus(signedIn: true, username: username, scopes: scopes)
     }
 
@@ -868,6 +872,33 @@ public actor GitHubService {
             return nil
         }
         return value
+    }
+
+    /// Read every generic-password value stored under `keychainService` in a
+    /// SINGLE `SecItemCopyMatching` (one Keychain access, hence one auth prompt)
+    /// and return them keyed by account. Used by `status()` so the common
+    /// "am I signed in + who + what scopes" check costs one prompt, not three.
+    private static func keychainReadAll() -> [String: String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else {
+            return [:]
+        }
+        var out: [String: String] = [:]
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  let data = item[kSecValueData as String] as? Data,
+                  let value = String(data: data, encoding: .utf8) else { continue }
+            out[account] = value
+        }
+        return out
     }
 
     /// Upsert a generic-password value. Equivalent to

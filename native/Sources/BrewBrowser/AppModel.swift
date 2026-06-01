@@ -28,6 +28,34 @@ enum Section: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Library type filter — drives the segmented control above the Library table.
+/// Mirrors the Tauri Library pill set minus "vulnerable" (which needs a
+/// library-wide scan-all, still deferred on the native side).
+enum LibraryFilter: String, CaseIterable, Identifiable, Hashable {
+    case all      = "All"
+    case formulae = "Formulae"
+    case casks    = "Casks"
+    case outdated = "Outdated"
+
+    var id: String { rawValue }
+}
+
+/// A flattened Library table row. Built in `AppModel.libraryRows` so the
+/// `Table` columns are pure value reads (name/version/kind + the precomputed
+/// outdated flag and AI-gated enrichment summary).
+struct LibraryRow: Identifiable, Hashable, Sendable {
+    var id: String { name }
+    let name: String
+    let version: String
+    let kind: InstalledPackage.Kind
+    let isOutdated: Bool
+    let summary: String
+
+    /// Comparable proxy for sorting the Outdated column (`Bool` isn't
+    /// `Comparable`). Outdated rows sort high so descending surfaces them first.
+    var outdatedRank: Int { isOutdated ? 1 : 0 }
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -36,24 +64,67 @@ final class AppModel {
     var isLoading = false
     var loadError: String?
 
-    /// Live filter text for the Library search field (`.searchable`).
-    var query: String = ""
-
-    /// Global toolbar search text (the centered Safari-style field).
+    /// Global toolbar search text (the single `.searchable` field on the detail
+    /// column). Drives both the toolbar suggestions and the Library table
+    /// filter — there is exactly one search field in the toolbar.
     var globalQuery: String = ""
 
-    /// When set from the Dashboard, Library shows only outdated packages.
-    var libraryOutdatedOnly = false
+    /// Library type filter — the segmented control above the table. Dashboard
+    /// entry points set `.outdated` (Updates) or `.all` (installed / search).
+    var libraryFilter: LibraryFilter = .all
 
-    /// Case-insensitive name filter, optionally restricted to outdated.
-    var filtered: [InstalledPackage] {
-        var base = installed
-        if libraryOutdatedOnly {
-            let names = Set(outdated.map(\.name))
-            base = base.filter { names.contains($0.name) }
+    /// Sort order for the Library `Table`, bound to its `sortOrder:`. Defaults
+    /// to ascending by name (the stock first-column-ascending convention).
+    var librarySort: [KeyPathComparator<LibraryRow>] = [
+        KeyPathComparator(\LibraryRow.name, order: .forward)
+    ]
+
+    /// Set of outdated package names for O(1) per-row tagging.
+    private var outdatedNames: Set<String> { Set(outdated.map(\.name)) }
+
+    /// The Library rows after the type filter + text query, before sorting.
+    /// Each row carries its outdated flag and (AI-gated) enrichment summary so
+    /// the `Table` columns are pure value reads.
+    var libraryRows: [LibraryRow] {
+        let outdatedSet = outdatedNames
+        let showSummary = settings.aiFeaturesVisible
+        // Filter off the single shared toolbar search field (`globalQuery`).
+        // Library must NOT add its own `.searchable` — two .searchable in one
+        // toolbar both claim the `com.apple.SwiftUI.search` item id and AppKit
+        // throws "NSToolbar already contains an item…" → SIGTRAP on layout.
+        let q = globalQuery.trimmingCharacters(in: .whitespaces)
+
+        return installed.compactMap { pkg in
+            switch libraryFilter {
+            case .all:      break
+            case .formulae: guard pkg.kind == .formula else { return nil }
+            case .casks:    guard pkg.kind == .cask else { return nil }
+            case .outdated: guard outdatedSet.contains(pkg.name) else { return nil }
+            }
+            if !q.isEmpty, !pkg.name.localizedCaseInsensitiveContains(q) { return nil }
+            return LibraryRow(
+                name: pkg.name,
+                version: pkg.version,
+                kind: pkg.kind,
+                isOutdated: outdatedSet.contains(pkg.name),
+                summary: showSummary ? (enrichment?.entry(for: pkg.name)?.summary ?? "") : ""
+            )
         }
-        guard !query.isEmpty else { return base }
-        return base.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+
+    /// `libraryRows` with the table's current `sortOrder` applied.
+    var sortedLibraryRows: [LibraryRow] {
+        libraryRows.sorted(using: librarySort)
+    }
+
+    /// Per-filter row counts for the segmented control labels.
+    func libraryFilterCount(_ filter: LibraryFilter) -> Int {
+        switch filter {
+        case .all:      return installed.count
+        case .formulae: return installed.lazy.filter { $0.kind == .formula }.count
+        case .casks:    return installed.lazy.filter { $0.kind == .cask }.count
+        case .outdated: return outdatedNames.count
+        }
     }
 
     /// Type-ahead suggestions for the toolbar search — top installed matches.
@@ -67,25 +138,25 @@ final class AppModel {
         )
     }
 
-    /// Commit a search selection: jump to Library, pre-filtered to that name.
+    /// Commit a search selection: jump to Library, pre-filtered to that name
+    /// via the shared toolbar search field.
     func openInLibrary(_ pkg: InstalledPackage) {
-        query = pkg.name
-        libraryOutdatedOnly = false
+        globalQuery = pkg.name
+        libraryFilter = .all
         selection = .library
-        globalQuery = ""
     }
 
     /// Open the full Library (cleared filters). Used by the "installed" stat.
     func openLibrary() {
-        query = ""
-        libraryOutdatedOnly = false
+        globalQuery = ""
+        libraryFilter = .all
         selection = .library
     }
 
     /// Open Library filtered to outdated packages. Used by the Updates stat/card.
     func openOutdatedInLibrary() {
-        query = ""
-        libraryOutdatedOnly = true
+        globalQuery = ""
+        libraryFilter = .outdated
         selection = .library
     }
 
@@ -172,8 +243,12 @@ final class AppModel {
         isLoading = true
         loadError = nil
         do {
-            installed = try await brew.listInstalledFormulae()
-            formulaCount = installed.count
+            // Library lists BOTH formulae and casks (the Casks filter was empty
+            // because we only loaded formulae). Dashboard's formula/cask counts
+            // come from their own brew calls in loadDashboard.
+            installed = try await brew.listInstalledAll()
+            formulaCount = installed.lazy.filter { $0.kind == .formula }.count
+            caskCount = installed.lazy.filter { $0.kind == .cask }.count
         } catch {
             loadError = error.localizedDescription
         }
@@ -183,7 +258,7 @@ final class AppModel {
     /// Load all Dashboard stats. Reuses the Library load for the formula count
     /// (and triggers it if it hasn't run), then fans out the cheap counts.
     func loadDashboard() async {
-        if installed.isEmpty { await loadLibrary() } else { formulaCount = installed.count }
+        if installed.isEmpty { await loadLibrary() } else { formulaCount = installed.lazy.filter { $0.kind == .formula }.count }
         async let casks = try? brew.countCasks()
         async let leaves = try? brew.countLeaves()
         async let onRequest = try? brew.countOnRequest()

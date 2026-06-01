@@ -117,10 +117,16 @@ struct ContentView: View {
     }
 }
 
-/// Installed formulae — a stock `List` with the system `.searchable` field.
-/// No floating header, no glass, no custom row chrome.
+/// Installed packages — a stock SwiftUI `Table` (the macOS sortable
+/// multi-column control: click-to-sort headers, resizable columns, native
+/// selection). A segmented type filter sits in a thin bar above it. Selection
+/// drives the shared package-detail inspector. No custom row chrome.
 struct LibraryView: View {
     @Bindable var model: AppModel
+
+    /// The table's selection — the package `id` (name). Mirrors the inspector's
+    /// open package so the highlighted row tracks the detail panel.
+    @State private var selectedID: LibraryRow.ID?
 
     var body: some View {
         Group {
@@ -133,27 +139,137 @@ struct LibraryView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(err)
                 )
-            } else if model.filtered.isEmpty {
-                ContentUnavailableView.search(text: model.query)
             } else {
-                List(model.filtered) { pkg in
-                    Button {
-                        model.openDetail(pkg)
-                    } label: {
-                        LabeledContent {
-                            Text(pkg.version)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        } label: {
-                            Label(pkg.name, systemImage: "shippingbox")
-                        }
-                        .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
+                VStack(spacing: 0) {
+                    filterBar
+                    Divider()
+                    table
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
-        .searchable(text: $model.query, prompt: "Filter formulae")
+        // NOTE: no `.searchable` here — Library filters off the shared toolbar
+        // search field (`globalQuery`, declared on the detail column). A second
+        // `.searchable` would register a duplicate toolbar search item and crash
+        // AppKit on layout ("NSToolbar already contains com.apple.SwiftUI.search").
+        // Keep the table highlight in sync with the inspector: if detail is
+        // closed elsewhere (⊗ box), clear the row selection too.
+        .onChange(of: model.showDetail) { _, shown in
+            if !shown { selectedID = nil }
+        }
+    }
+
+    // Segmented type filter with per-filter counts. Stock control, no overrides.
+    // Centered in the bar — the macOS view-switcher convention (Finder/Preview).
+    private var filterBar: some View {
+        Picker("Filter", selection: $model.libraryFilter) {
+            ForEach(LibraryFilter.allCases) { f in
+                Text("\(f.rawValue) (\(model.libraryFilterCount(f)))").tag(f)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var table: some View {
+        if model.sortedLibraryRows.isEmpty {
+            if model.globalQuery.isEmpty {
+                ContentUnavailableView(
+                    "No packages",
+                    systemImage: "shippingbox",
+                    description: Text("Nothing matches the \(model.libraryFilter.rawValue.lowercased()) filter.")
+                )
+            } else {
+                ContentUnavailableView.search(text: model.globalQuery)
+            }
+        } else {
+            // Two fixed-column-set variants instead of a conditional
+            // `TableColumn` inside one builder: wrapping a column in `if`
+            // makes the underlying NSTableColumn set unstable and AppKit
+            // throws an NSException mid-layout (SIGTRAP via _crashOnException).
+            // The AI-gated Description column lives in its own static variant.
+            if model.settings.aiFeaturesVisible {
+                tableWithDescription
+            } else {
+                tableNoDescription
+            }
+        }
+    }
+
+    private var tableWithDescription: some View {
+        Table(model.sortedLibraryRows, selection: $selectedID, sortOrder: $model.librarySort) {
+            TableColumn("Name", value: \.name) { row in
+                Label(row.name, systemImage: "shippingbox")
+            }
+            .width(min: 140, ideal: 200)
+
+            TableColumn("Description", value: \.summary) { row in
+                Text(row.summary).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .width(min: 160, ideal: 320)
+
+            TableColumn("Version", value: \.version) { row in
+                Text(row.version).foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(min: 80, ideal: 120)
+
+            TableColumn("Type", value: \.kind.rawValue) { row in
+                KindPill(kind: row.kind)
+            }
+            .width(min: 64, ideal: 80)
+
+            TableColumn("Outdated", value: \.outdatedRank) { row in
+                outdatedCell(row)
+            }
+            .width(min: 56, ideal: 72)
+        }
+        .onChange(of: selectedID, openSelected)
+    }
+
+    private var tableNoDescription: some View {
+        Table(model.sortedLibraryRows, selection: $selectedID, sortOrder: $model.librarySort) {
+            TableColumn("Name", value: \.name) { row in
+                Label(row.name, systemImage: "shippingbox")
+            }
+            .width(min: 140, ideal: 240)
+
+            TableColumn("Version", value: \.version) { row in
+                Text(row.version).foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(min: 80, ideal: 120)
+
+            TableColumn("Type", value: \.kind.rawValue) { row in
+                KindPill(kind: row.kind)
+            }
+            .width(min: 64, ideal: 80)
+
+            TableColumn("Outdated", value: \.outdatedRank) { row in
+                outdatedCell(row)
+            }
+            .width(min: 56, ideal: 72)
+        }
+        .onChange(of: selectedID, openSelected)
+    }
+
+    @ViewBuilder
+    private func outdatedCell(_ row: LibraryRow) -> some View {
+        if row.isOutdated {
+            Image(systemName: "arrow.up.circle.fill")
+                .foregroundStyle(.orange)
+                .help("Update available")
+        }
+    }
+
+    private func openSelected() {
+        guard let id = selectedID,
+              let pkg = model.installed.first(where: { $0.id == id }) else { return }
+        model.openDetail(pkg)
     }
 }
 

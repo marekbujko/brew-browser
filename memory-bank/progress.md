@@ -849,3 +849,15 @@ Off-`main` experiment on branch `experiment/native-swift-liquid-glass`: a faithf
 - SPM (`swift build`), not an Xcode project. Full Xcode installed but `xcode-select` → CommandLineTools, so `xcodebuild` unavailable; `swift build` links Liquid Glass fine. `native/build-app.sh` wraps the binary into a `.app`.
 - **Stock Apple components only, no overrides** — the recurring lesson of the spike. `swift build` → 0 errors at end of session.
 - **Not committed.** The entire `native/` tree is uncommitted on the branch; no commits past `main`. `main` (Tauri v0.5.0) untouched. Not yet visually verified beyond the panels noted above.
+
+## 2026-06-01 (native rebuild — Library panel + fixes, committed)
+
+First commit of the `native/` tree landed (`584f64f`, 2026-05-31) with a `.gitignore` keeping `.build/` + `BrewBrowser.app` out. Then the **Library panel** + a run of fixes, all user-verified and committed. Detail in `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`.
+
+- **Library panel** — native SwiftUI `Table` (sortable columns: Name / Description[AI-gated] / Version / Type / Outdated), **centered** segmented type filter (All / Formulae / Casks / Outdated w/ counts), row→detail inspector. `LibraryFilter` enum + `LibraryRow` + `sortedLibraryRows` on `AppModel`. macOS-default `Table` + segmented control, no overrides.
+- **Library crash fixed** — clicking the Library tab crashed (SIGTRAP). Real cause (found via `lldb` on `objc_exception_throw`, since the `.ips` hid it): **two `.searchable` in one toolbar** → duplicate `com.apple.SwiftUI.search` item. Collapsed to one shared toolbar search field.
+- **Casks now load** — `loadLibrary` only listed formulae; added `BrewService.listInstalledCasks` + `listInstalledAll`.
+- **Keychain 3→1** — `GitHubService.status()` did three separate `SecItemCopyMatching` reads (three prompts); new `keychainReadAll()` batches into one. (Per-rebuild prompt remains — ad-hoc signing; dev-loop-only, deferred.)
+- **Lessons:** for SIGTRAP-via-`_crashOnException`, use lldb on `objc_exception_throw` (the `.ips` omits the reason); exactly one `.searchable` per toolbar; conditional `TableColumn` is unstable — branch into static-column `Table` variants.
+- **Xcode MCP available** — 20 `mcp__xcode__*` tools connected this session. Caveat: they drive Xcode (`.xcodeproj`/scheme); this is SPM-only, so `BuildProject` may not map without opening `Package.swift` in Xcode. Build loop stays `./build-app.sh` until verified.
+- **Still pending:** Discover / Trending / Snapshots / Services / Activity panels; Dashboard GitHub "starred N of M" card; Sparkle in-app updates; Vulns scan-all.

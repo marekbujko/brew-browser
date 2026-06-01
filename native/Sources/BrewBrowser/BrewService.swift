@@ -100,6 +100,31 @@ actor BrewService {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    /// `brew list --cask --versions` → [InstalledPackage] of kind `.cask`.
+    /// Same line shape as the formula lister: "name version1 version2 …".
+    func listInstalledCasks() async throws -> [InstalledPackage] {
+        let raw = try await runCapture(["list", "--cask", "--versions"])
+        return raw
+            .split(separator: "\n")
+            .compactMap { line -> InstalledPackage? in
+                let parts = line.split(separator: " ", maxSplits: 1)
+                guard let name = parts.first else { return nil }
+                let version = parts.count > 1
+                    ? String(parts[1].split(separator: " ").first ?? "")
+                    : "—"
+                return InstalledPackage(name: String(name), version: version, kind: .cask)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// All installed packages — formulae + casks — merged and name-sorted.
+    func listInstalledAll() async throws -> [InstalledPackage] {
+        async let formulae = listInstalledFormulae()
+        async let casks = listInstalledCasks()
+        let merged = try await formulae + casks
+        return merged.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     /// Count of newline-delimited entries from a brew subcommand, ignoring
     /// blank lines. Used for the cheap "how many X" Dashboard stats.
     private func lineCount(_ args: [String]) async throws -> Int {
