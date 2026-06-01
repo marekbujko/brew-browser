@@ -18,6 +18,10 @@ struct PackageDetailView: View {
     /// Display title: enriched friendly name when available, else the token.
     private var title: String { enrichment?.friendlyName ?? pkg.name }
 
+    /// Installed = brew reported an installed version. nil (Discover packages
+    /// not on disk) → not installed. Drives the footer's Install/Uninstall.
+    private var isInstalled: Bool { info?.installedVersion != nil }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -327,17 +331,31 @@ struct PackageDetailView: View {
                 Text(model.actionLabel ?? "Working…").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if info?.isOutdated == true {
-                Button {
-                    Task { await model.upgradeDetail() }
-                } label: { Label("Upgrade", systemImage: "arrow.up.circle") }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.actionRunning)
+            // Footer adapts to install state — only once info has loaded, so we
+            // never flash the wrong button. `installedVersion == nil` means not
+            // installed (Discover surfaces these) → Install. Installed →
+            // Uninstall, plus Upgrade when outdated.
+            if info != nil {
+                if isInstalled {
+                    if info?.isOutdated == true {
+                        Button {
+                            Task { await model.upgradeDetail() }
+                        } label: { Label("Upgrade", systemImage: "arrow.up.circle") }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.actionRunning)
+                    }
+                    Button(role: .destructive) {
+                        confirmUninstall = true
+                    } label: { Label("Uninstall", systemImage: "trash") }
+                    .disabled(model.actionRunning)
+                } else {
+                    Button {
+                        Task { await model.installDetail() }
+                    } label: { Label("Install", systemImage: "arrow.down.circle") }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.actionRunning)
+                }
             }
-            Button(role: .destructive) {
-                confirmUninstall = true
-            } label: { Label("Uninstall", systemImage: "trash") }
-            .disabled(model.actionRunning)
         }
         .padding(12)
         .background(.bar)

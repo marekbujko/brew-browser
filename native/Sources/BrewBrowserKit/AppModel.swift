@@ -549,6 +549,17 @@ final class AppModel {
         closeDetail()
     }
 
+    /// Install the detail package (Discover → uninstalled packages). Reloads
+    /// detail afterward so the footer flips Install → Uninstall + the meta
+    /// table shows the now-installed version.
+    func installDetail() async {
+        guard let pkg = detailPackage else { return }
+        await runAction("Installing \(pkg.name)") {
+            try await self.brew.install(pkg.name, kind: pkg.kind)
+        }
+        await loadDetail(pkg)
+    }
+
     private func runAction(_ label: String, _ work: @escaping () async throws -> Void) async {
         actionRunning = true
         actionLabel = label
