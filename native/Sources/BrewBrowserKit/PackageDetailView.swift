@@ -21,14 +21,8 @@ struct PackageDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Inspector header — plain text title + kind pill + close, INSIDE
-                // the inspector content (not the window toolbar, which would
-                // pollute the main toolbar and displace the search field).
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(title)
-                        .font(.title2.weight(.semibold))
-                        .textSelection(.enabled)
-                    KindPill(kind: pkg.kind)
+                // Close box pinned top-right; the icon + title center beneath it.
+                HStack {
                     Spacer()
                     Button {
                         model.closeDetail()
@@ -40,6 +34,20 @@ struct PackageDetailView: View {
                     .buttonStyle(.plain)
                     .help("Close")
                 }
+                .padding(.bottom, -8)  // tuck the title block up under the ✕ row
+
+                // Centered icon (casks) + title + kind pill — the app's identity
+                // at the top of the inspector, above the meta table.
+                VStack(spacing: 8) {
+                    DetailIcon(model: model, token: pkg.name, kind: pkg.kind,
+                               homepage: info?.homepage ?? "")
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                    KindPill(kind: pkg.kind)
+                }
+                .frame(maxWidth: .infinity)
 
                 if model.detailLoading && info == nil {
                     ProgressView("Loading \(pkg.name)…")
@@ -390,6 +398,36 @@ struct FlowRow: Layout {
             sub.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// Large centered app icon for the detail panel header. Resolves the real icon
+/// (Appcasks → Google favicon) for casks via the shared IconService; formulae
+/// (CLI tools, no app icon) show a terminal SF Symbol. 64pt to anchor the
+/// inspector's identity block above the meta table.
+private struct DetailIcon: View {
+    @Bindable var model: AppModel
+    let token: String
+    let kind: InstalledPackage.Kind
+    let homepage: String
+
+    var body: some View {
+        Group {
+            if kind == .cask, let url = model.iconCache[token],
+               let img = NSImage(contentsOf: url) {
+                Image(nsImage: img).resizable().interpolation(.high)
+                    .frame(width: 64, height: 64)
+                    .clipShape(.rect(cornerRadius: 14))
+            } else {
+                Image(systemName: kind == .cask ? "app.dashed" : "terminal")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 64, height: 64)
+            }
+        }
+        .task(id: token) {
+            await model.resolveIcon(token: token, kind: kind, homepage: homepage)
         }
     }
 }
