@@ -366,3 +366,64 @@ The v0.4.0 outbound enumeration is at ten paths (path j is the most recent — o
 **Trade-off accepted:** Two codebases for the same product while the experiment runs. Mitigated by it being clearly branch-scoped and uncommitted; if it doesn't prove out, the branch is abandoned with zero impact on `main`. Sparkle-based in-app updates are the one subsystem not yet ported (deferred).
 
 **References:** `native/README.md`, `techContext.md` ("Native rebuild" section), `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`, `progress.md` (2026-05-31), cross-session memory `project-native-swift-rebuild.md`.
+
+## 2026-06-01: Keep BOTH codebases (Tauri + Swift) — parity charter (Option A)
+
+**Decision:** Maintain the Tauri app AND the native Swift app long-term, in
+**feature + data-contract parity** (NOT code parity). This is "Option A —
+disciplined double-implementation." Option B (a shared `brew-core` Rust crate
+behind both UIs, via sidecar-JSON or FFI) was considered and **deferred** — only
+revisit when the same brew/parse bug has been fixed in both languages a third
+time (i.e. when double-maintenance demonstrably hurts). If revisited, prefer the
+**sidecar-JSON** approach over FFI (FFI's Swift↔Rust marshaling complexity
+rarely pays off for a solo project).
+
+**Why both (the hard constraint):** SwiftUI does NOT run on Linux and never will
+(Swift-the-language does; SwiftUI is Apple-only; Liquid Glass is macOS-26-only).
+So the two apps have **distinct, non-overlapping jobs** — neither can replace the
+other:
+- **Tauri** = the Linux app (`feat/linux-support`, builds on Ubuntu arm64) AND
+  the pre-Tahoe macOS app (runs macOS 13+). The shipping product on `main`.
+- **Swift** = the macOS-26 flagship (the "genuinely native" answer to the
+  "Tauri isn't native" chatter). Requires macOS 26.
+
+**Linux release is ORTHOGONAL to the Swift work** — it's pure Tauri (merge
+`feat/linux-support`, CI for `.deb`/`.AppImage`, package, distribute). The Swift
+branch neither helps nor blocks it. Don't conflate the two tracks.
+
+### Parity rules (durable — these are instructions for future sessions)
+
+The agent (Claude Code), not a human, maintains parity. The memory-bank is the
+single canonical spec for BOTH apps. Concretely, every session:
+
+1. **Any change to a shared DATA CONTRACT must land in both apps in the same
+   work, or be explicitly logged as a parity gap.** Shared contracts:
+   `settings.json` (path + schema — Rust `Settings` ⇄ Swift `AppSettings`),
+   bundled `categories.json` + `enrichment.json` (Swift copies live at
+   `native/Sources/BrewBrowserKit/Resources/`, sourced from `src-tauri/data/`),
+   the trending endpoint (`brew-browser.zerologic.com`), GitHub OAuth client_id
+   (`Ov23liJZKbvrSBuiOPkT`), and the `brew`/`brew vulns` CLI invocations + their
+   parse gotchas.
+2. **Cross-reference comments ARE the parity map.** Swift services already cite
+   their Rust counterparts (e.g. `GitHubService.swift` → `auth.rs:NNN`,
+   `VulnsService.swift` → the 5 brew-vulns smoke-test gotchas). Keep these
+   citations current; when porting or fixing, read the cited Rust site first.
+3. **When fixing a brew-integration bug in one app, check + fix the other.**
+   The brew/vulns parse traps are identical across languages (same `brew` output).
+   A fix in Rust likely applies to Swift and vice-versa.
+4. **Bundled data refresh updates BOTH.** Re-running `tools/enrich` or
+   `tools/catalog` regenerates `src-tauri/data/*`; the Swift `Resources/` copies
+   must be re-copied in the same change (they're uncompressed copies).
+5. **Log parity gaps honestly.** If a feature ships in one app only (e.g. Swift
+   still lacks Sparkle updates + library-wide vuln scan-all), record it as a known
+   gap in the task record — don't let the two silently drift undocumented.
+
+**Trade-off accepted:** brew/vulns/github/trending logic is written twice (Rust +
+Swift). This taxes every new feature. Accepted because the data contracts already
+capture ~80% of parity value, the brew-parsing surface is stable, and a solo
+project doesn't justify the bridge engineering of Option B yet.
+
+**References:** the "keep both" question + analysis, 2026-06-01; supersedes
+nothing (the 2026-05-30 native-rebuild ADR framed the Swift app as an experiment
+"unless/until it proves out" — this commits to keeping both regardless, with
+defined roles). See [[project-native-swift-rebuild]] cross-session memory.
