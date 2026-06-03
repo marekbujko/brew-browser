@@ -178,12 +178,18 @@ struct TrendingView: View {
     @ViewBuilder
     private func velocityCell(_ row: TrendingRow) -> some View {
         if let v = row.velocity {
+            // Canonical banded rule (matches velocity_index's documented
+            // 1.0≈steady, >1.5 surging, <0.7 cooling — shared with Tauri):
+            // ≥1.5 → flame, ≤0.7 → snowflake, otherwise neutral (no icon).
             HStack(spacing: 4) {
-                Image(systemName: v >= 1 ? "flame.fill" : "snowflake")
-                    .foregroundStyle(v >= 1 ? .orange : .secondary)
-                    .font(.caption2)
+                if v >= 1.5 {
+                    Image(systemName: "flame.fill").foregroundStyle(.orange).font(.caption2)
+                } else if v <= 0.7 {
+                    Image(systemName: "snowflake").foregroundStyle(.blue).font(.caption2)
+                }
                 Text(v, format: .number.precision(.fractionLength(2)))
                     .monospacedDigit().font(.caption)
+                    .foregroundStyle(v >= 1.5 ? .orange : (v <= 0.7 ? .blue : .secondary))
             }
         } else {
             Text("—").foregroundStyle(.secondary)

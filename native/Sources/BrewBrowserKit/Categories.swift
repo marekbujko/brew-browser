@@ -9,11 +9,17 @@ struct CategoryBreakdown: Identifiable, Hashable, Sendable {
     let label: String
     let count: Int
     let fraction: Double
+    /// SF Symbol name for the category, read straight from `categories.json`'s
+    /// `iconSF` field (chosen once in `tools/categorize/categorize.py`). No
+    /// per-icon mapping in UI code — the data decides the glyph.
+    var icon: String = "questionmark.circle"
 }
 
 struct CategoryCatalog: Sendable {
     /// slug → display label
     private let labels: [String: String]
+    /// slug → SF Symbol name (from `categories.json` `iconSF`)
+    private let sfIcons: [String: String]
     /// package name → [slug]
     private let formulae: [String: [String]]
     private let casks: [String: [String]]
@@ -27,16 +33,17 @@ struct CategoryCatalog: Sendable {
         else { return nil }
 
         var labels: [String: String] = [:]
+        var sfIcons: [String: String] = [:]
         if let cats = root["categories"] as? [String: Any] {
             for (slug, v) in cats {
-                if let obj = v as? [String: Any], let label = obj["label"] as? String {
-                    labels[slug] = label
-                }
+                guard let obj = v as? [String: Any] else { continue }
+                if let label = obj["label"] as? String { labels[slug] = label }
+                if let sf = obj["iconSF"] as? String { sfIcons[slug] = sf }
             }
         }
         let formulae = (root["formulae"] as? [String: [String]]) ?? [:]
         let casks = (root["casks"] as? [String: [String]]) ?? [:]
-        return CategoryCatalog(labels: labels, formulae: formulae, casks: casks)
+        return CategoryCatalog(labels: labels, sfIcons: sfIcons, formulae: formulae, casks: casks)
     }
 
     /// Category slugs for an installed package (formula first, then cask map).
@@ -89,7 +96,8 @@ struct CategoryCatalog: Sendable {
                 slug: slug,
                 label: labels[slug] ?? slug.capitalized,
                 count: count,
-                fraction: Double(count) / Double(totalMemberships)
+                fraction: Double(count) / Double(totalMemberships),
+                icon: sfIcons[slug] ?? "questionmark.circle"
             ))
         }
         let tail = ranked.dropFirst(top).reduce(0) { $0 + $1.value } + uncategorized
@@ -98,7 +106,8 @@ struct CategoryCatalog: Sendable {
                 slug: "other",
                 label: "Other",
                 count: tail,
-                fraction: Double(tail) / Double(totalMemberships)
+                fraction: Double(tail) / Double(totalMemberships),
+                icon: "questionmark.circle"
             ))
         }
         return result

@@ -371,6 +371,11 @@ struct CategoriesCard: View {
     private func legendRow(idx: Int, cat: CategoryBreakdown) -> some View {
         HStack(spacing: 10) {
             Circle().fill(color(idx)).frame(width: 10, height: 10)
+            // Per-category glyph (matches the Tauri legend's icon column).
+            Image(systemName: cat.icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
             Text(cat.label)
                 .font(.callout)
                 .fontWeight(hovered == cat.slug ? .semibold : .regular)

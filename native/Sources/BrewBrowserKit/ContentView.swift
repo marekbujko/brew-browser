@@ -142,6 +142,8 @@ public struct ContentView: View {
             TrendingView(model: model)
         case .activity:
             ActivityView(model: model)
+        case .snapshots:
+            SnapshotsView(model: model)
         default:
             PlaceholderView(section: model.selection)
         }

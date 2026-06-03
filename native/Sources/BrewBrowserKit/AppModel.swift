@@ -112,6 +112,10 @@ final class AppModel {
     var isLoading = false
     var loadError: String?
 
+    // Snapshots (Brewfile dump/restore) — see SnapshotStore.
+    var snapshots: [Snapshot] = []
+    var snapshotsLoading = false
+
     /// Global toolbar search text (the single `.searchable` field on the detail
     /// column). Drives both the toolbar suggestions and the Library table
     /// filter — there is exactly one search field in the toolbar.
@@ -494,9 +498,12 @@ final class AppModel {
         m.brewVersion = "5.1.14"
         m.brewPrefix = "/opt/homebrew"
         m.categories = [
-            CategoryBreakdown(slug: "developer-tools", label: "Developer Tools", count: 5, fraction: 0.56),
-            CategoryBreakdown(slug: "productivity", label: "Productivity", count: 2, fraction: 0.22),
-            CategoryBreakdown(slug: "terminal", label: "Terminal", count: 2, fraction: 0.22),
+            CategoryBreakdown(slug: "developer-tools", label: "Developer Tools", count: 5, fraction: 0.56,
+                              icon: "chevron.left.forwardslash.chevron.right"),
+            CategoryBreakdown(slug: "productivity", label: "Productivity", count: 2, fraction: 0.22,
+                              icon: "briefcase"),
+            CategoryBreakdown(slug: "terminal", label: "Terminal", count: 2, fraction: 0.22,
+                              icon: "terminal"),
         ]
         m.storage = [
             StorageItem(label: "Formulae (Cellar)", path: "/opt/homebrew/Cellar", bytes: 11_180_000_000),
@@ -548,6 +555,7 @@ final class AppModel {
     var storageTotalBytes: Int64 { storage.reduce(0) { $0 + $1.bytes } }
 
     private let brew = BrewService()
+    private let snapshotStore = SnapshotStore()
 
     func loadLibrary() async {
         isLoading = true
@@ -786,6 +794,49 @@ final class AppModel {
         args.append(pkg.name)
         await startJob("Installing \(pkg.name)", args: args, startedAt: Date().timeIntervalSince1970)
         if let pkg = detailPackage { await loadDetail(pkg) }
+    }
+
+    // MARK: - Snapshots (Brewfile)
+
+    /// Load the saved Brewfile snapshots from disk (newest first).
+    func loadSnapshots() async {
+        snapshotsLoading = true
+        snapshots = await snapshotStore.list()
+        snapshotsLoading = false
+    }
+
+    /// `brew bundle dump --file=<dir>/<id>.Brewfile --force` as a streaming
+    /// Activity job, then reload the list. Mirrors Tauri `brewfile_dump`.
+    func dumpSnapshot(label: String) async {
+        try? await snapshotStore.ensureDir()
+        let target = await snapshotStore.dumpTarget(forLabel: label)
+        let args = ["bundle", "dump", "--file=\(target.url.path)", "--force"]
+        await startJob("Dumping Brewfile: \(label)", args: args, startedAt: Date().timeIntervalSince1970)
+        await loadSnapshots()
+    }
+
+    /// `brew bundle install --file=<path>` as a streaming Activity job.
+    /// Mirrors Tauri `brewfile_install`.
+    func restoreSnapshot(_ snap: Snapshot) async {
+        let args = ["bundle", "install", "--file=\(snap.path)"]
+        await startJob("Restoring \(snap.label)", args: args, startedAt: Date().timeIntervalSince1970)
+    }
+
+    func deleteSnapshot(_ snap: Snapshot) async {
+        try? await snapshotStore.delete(id: snap.id)
+        await loadSnapshots()
+    }
+
+    /// Copy a snapshot to a user-picked destination (throws so the view can toast).
+    func exportSnapshot(_ snap: Snapshot, to dest: URL) async throws {
+        try await snapshotStore.export(id: snap.id, to: dest)
+    }
+
+    /// Import an external Brewfile (filename → label), then reload.
+    func importSnapshot(from src: URL) async throws {
+        let label = src.deletingPathExtension().lastPathComponent
+        try await snapshotStore.importFile(from: src, label: label.isEmpty ? "imported" : label)
+        await loadSnapshots()
     }
 
     /// Run a mutating brew command as an Activity job: creates a running job,
