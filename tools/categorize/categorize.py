@@ -40,27 +40,31 @@ PROMPT_SYSTEM = (SCRIPT_DIR / "prompts" / "system.txt").read_text()
 # ─────────────────────────────────────────────────────────────────────────────
 # Categories — single source of truth
 # ─────────────────────────────────────────────────────────────────────────────
-# slug: (label, lucide-icon-name, short-description-for-prompt)
-CATEGORIES: dict[str, tuple[str, str, str]] = {
-    "ai":               ("AI & ML",          "Brain",          "LLM runtimes, model tools, AI-assisted utilities, vector DBs"),
-    "browsers":         ("Browsers",         "Globe",          "Web browsers and browser engines"),
-    "cloud-devops":     ("Cloud & DevOps",   "Cloud",          "Kubernetes, container runtimes, IaC, cloud CLIs"),
-    "communication":    ("Communication",    "MessageSquare",  "Chat, email, video calls, messaging clients"),
-    "data":             ("Data",             "Database",       "Databases, query tools, ETL, data visualization"),
-    "developer-tools":  ("Developer Tools",  "Code",           "Compilers, languages, package managers, linters, build tools, IDEs-CLI"),
-    "editors":          ("Editors & IDEs",   "FileCode",       "Code editors and IDEs with GUI (vscode, sublime, zed)"),
-    "education":        ("Education",        "GraduationCap",  "Learning, tutoring, courseware"),
-    "games":            ("Games & Entertainment", "Gamepad2",  "Games, game launchers, emulators"),
-    "graphics":         ("Graphics & Design","Palette",        "Image editing, vector design, 3D, screenshot, CAD"),
-    "music":            ("Music",            "Music",          "Music players, streaming clients, DAWs"),
-    "office":           ("Office & Docs",    "FileText",       "Word processors, spreadsheets, presentations, PDF"),
-    "productivity":     ("Productivity",     "Briefcase",      "Note-taking, task management, calendars, launchers"),
-    "security":         ("Security",         "Lock",           "Password managers, VPNs, encryption, firewalls"),
-    "system-utilities": ("System Utilities", "Settings",       "Window managers, system monitors, menu-bar tools, cleaners"),
-    "terminal":         ("Terminal",         "Terminal",       "Terminal emulators, shells, multiplexers"),
-    "video-audio":      ("Video & Audio",    "Video",          "Video editors, codecs, screen recorders, audio converters"),
-    "writing":          ("Writing",          "PenTool",        "Long-form writing, markdown, dictation, journaling"),
-    "uncategorized":    ("Uncategorized",    "HelpCircle",     "Genuinely doesn't fit any other category"),
+# slug: (label, lucide-icon-name, sf-symbol-name, short-description-for-prompt)
+# The icon is chosen ONCE here and emitted to categories.json as both `icon`
+# (lucide, for the Tauri web UI) and `iconSF` (SF Symbol, for the native macOS
+# UI) — so neither UI re-decides icons in code. Adding a category? Pick both
+# names here and they flow to both apps via the data.
+CATEGORIES: dict[str, tuple[str, str, str, str]] = {
+    "ai":               ("AI & ML",          "Brain",          "brain",                                       "LLM runtimes, model tools, AI-assisted utilities, vector DBs"),
+    "browsers":         ("Browsers",         "Globe",          "globe",                                       "Web browsers and browser engines"),
+    "cloud-devops":     ("Cloud & DevOps",   "Cloud",          "cloud",                                       "Kubernetes, container runtimes, IaC, cloud CLIs"),
+    "communication":    ("Communication",    "MessageSquare",  "message",                                     "Chat, email, video calls, messaging clients"),
+    "data":             ("Data",             "Database",       "cylinder.split.1x2",                          "Databases, query tools, ETL, data visualization"),
+    "developer-tools":  ("Developer Tools",  "Code",           "chevron.left.forwardslash.chevron.right",     "Compilers, languages, package managers, linters, build tools, IDEs-CLI"),
+    "editors":          ("Editors & IDEs",   "FileCode",       "curlybraces",                                 "Code editors and IDEs with GUI (vscode, sublime, zed)"),
+    "education":        ("Education",        "GraduationCap",  "graduationcap",                               "Learning, tutoring, courseware"),
+    "games":            ("Games & Entertainment", "Gamepad2",  "gamecontroller",                              "Games, game launchers, emulators"),
+    "graphics":         ("Graphics & Design","Palette",        "paintpalette",                                "Image editing, vector design, 3D, screenshot, CAD"),
+    "music":            ("Music",            "Music",          "music.note",                                  "Music players, streaming clients, DAWs"),
+    "office":           ("Office & Docs",    "FileText",       "doc.text",                                    "Word processors, spreadsheets, presentations, PDF"),
+    "productivity":     ("Productivity",     "Briefcase",      "briefcase",                                   "Note-taking, task management, calendars, launchers"),
+    "security":         ("Security",         "Lock",           "lock",                                        "Password managers, VPNs, encryption, firewalls"),
+    "system-utilities": ("System Utilities", "Settings",       "gearshape",                                   "Window managers, system monitors, menu-bar tools, cleaners"),
+    "terminal":         ("Terminal",         "Terminal",       "terminal",                                    "Terminal emulators, shells, multiplexers"),
+    "video-audio":      ("Video & Audio",    "Video",          "video",                                       "Video editors, codecs, screen recorders, audio converters"),
+    "writing":          ("Writing",          "PenTool",        "pencil.tip",                                  "Long-form writing, markdown, dictation, journaling"),
+    "uncategorized":    ("Uncategorized",    "HelpCircle",     "questionmark.circle",                         "Genuinely doesn't fit any other category"),
 }
 
 DEFAULT_BATCH_SIZE = 50
@@ -149,7 +153,7 @@ def diff(pkgs: list[Pkg], prior: dict[str, str]) -> tuple[list[Pkg], list[str]]:
 # ─────────────────────────────────────────────────────────────────────────────
 def build_system_prompt() -> str:
     cats_lines = []
-    for slug, (label, _icon, hint) in CATEGORIES.items():
+    for slug, (label, _icon, _sf, hint) in CATEGORIES.items():
         cats_lines.append(f"- {slug}: {label} — {hint}")
     max_cats = int(os.environ.get("CATEGORIZE_MAX_CATEGORIES", DEFAULT_MAX_CATEGORIES))
     return PROMPT_SYSTEM.format(
@@ -280,8 +284,8 @@ def write_output(
         target[token] = cats
 
     cat_meta = {
-        slug: {"label": label, "icon": icon}
-        for slug, (label, icon, _hint) in CATEGORIES.items()
+        slug: {"label": label, "icon": icon, "iconSF": sf}
+        for slug, (label, icon, sf, _hint) in CATEGORIES.items()
     }
 
     output = {

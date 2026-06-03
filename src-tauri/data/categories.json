@@ -5,79 +5,98 @@
   "categories": {
     "ai": {
       "label": "AI & ML",
-      "icon": "Brain"
+      "icon": "Brain",
+      "iconSF": "brain"
     },
     "browsers": {
       "label": "Browsers",
-      "icon": "Globe"
+      "icon": "Globe",
+      "iconSF": "globe"
     },
     "cloud-devops": {
       "label": "Cloud & DevOps",
-      "icon": "Cloud"
+      "icon": "Cloud",
+      "iconSF": "cloud"
     },
     "communication": {
       "label": "Communication",
-      "icon": "MessageSquare"
+      "icon": "MessageSquare",
+      "iconSF": "message"
     },
     "data": {
       "label": "Data",
-      "icon": "Database"
+      "icon": "Database",
+      "iconSF": "cylinder.split.1x2"
     },
     "developer-tools": {
       "label": "Developer Tools",
-      "icon": "Code"
+      "icon": "Code",
+      "iconSF": "chevron.left.forwardslash.chevron.right"
     },
     "editors": {
       "label": "Editors & IDEs",
-      "icon": "FileCode"
+      "icon": "FileCode",
+      "iconSF": "curlybraces"
     },
     "education": {
       "label": "Education",
-      "icon": "GraduationCap"
+      "icon": "GraduationCap",
+      "iconSF": "graduationcap"
     },
     "games": {
       "label": "Games & Entertainment",
-      "icon": "Gamepad2"
+      "icon": "Gamepad2",
+      "iconSF": "gamecontroller"
     },
     "graphics": {
       "label": "Graphics & Design",
-      "icon": "Palette"
+      "icon": "Palette",
+      "iconSF": "paintpalette"
     },
     "music": {
       "label": "Music",
-      "icon": "Music"
+      "icon": "Music",
+      "iconSF": "music.note"
     },
     "office": {
       "label": "Office & Docs",
-      "icon": "FileText"
+      "icon": "FileText",
+      "iconSF": "doc.text"
     },
     "productivity": {
       "label": "Productivity",
-      "icon": "Briefcase"
+      "icon": "Briefcase",
+      "iconSF": "briefcase"
     },
     "security": {
       "label": "Security",
-      "icon": "Lock"
+      "icon": "Lock",
+      "iconSF": "lock"
     },
     "system-utilities": {
       "label": "System Utilities",
-      "icon": "Settings"
+      "icon": "Settings",
+      "iconSF": "gearshape"
     },
     "terminal": {
       "label": "Terminal",
-      "icon": "Terminal"
+      "icon": "Terminal",
+      "iconSF": "terminal"
     },
     "video-audio": {
       "label": "Video & Audio",
-      "icon": "Video"
+      "icon": "Video",
+      "iconSF": "video"
     },
     "writing": {
       "label": "Writing",
-      "icon": "PenTool"
+      "icon": "PenTool",
+      "iconSF": "pencil.tip"
     },
     "uncategorized": {
       "label": "Uncategorized",
-      "icon": "HelpCircle"
+      "icon": "HelpCircle",
+      "iconSF": "questionmark.circle"
     }
   },
   "casks": {
