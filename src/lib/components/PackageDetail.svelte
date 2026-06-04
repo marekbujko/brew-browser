@@ -133,6 +133,10 @@
     // or Offline Mode is on, so this is safe to call unconditionally.
     // Soft-fails — sparkline simply doesn't appear if fetch fails.
     void trendingHistory.ensureSeriesLoaded(name, kind);
+    // Opt-in live enrichment: fetch fresher friendly-name/summary/etc. for the
+    // package being viewed and overlay it. No-ops unless the user opted in
+    // (toggle + not paranoid + AI on); soft-fails to the bundled entry.
+    void enrichment.ensureLive(name);
   }
 
   async function doInstall() {

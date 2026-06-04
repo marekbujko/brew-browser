@@ -28,6 +28,7 @@
   import { settings } from "$lib/stores/settings.svelte";
   import SettingsSectionUpdates from "$lib/components/SettingsSectionUpdates.svelte";
   import SettingsSectionTrendingHistory from "$lib/components/SettingsSectionTrendingHistory.svelte";
+  import SettingsSectionLiveEnrichment from "$lib/components/SettingsSectionLiveEnrichment.svelte";
   import SettingsSectionVulnerabilities from "$lib/components/SettingsSectionVulnerabilities.svelte";
   import type {
     CaskIconMode,
@@ -321,6 +322,10 @@
          boundary (project infra, not Homebrew first-party). Lives in
          Network because it's a network opt-in. -->
     <SettingsSectionTrendingHistory />
+
+    <!-- Live category + description updates — opt-in, same first-party host
+         as Enhanced Trending (distinct /enrichment/* path). Network opt-in. -->
+    <SettingsSectionLiveEnrichment />
 
     <!-- v0.5.0: Vulnerability scanning — opt-in, OSV.dev + GitHub
          Advisories trust boundary. Lives in Network because it's a

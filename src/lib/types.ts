@@ -382,6 +382,13 @@ export interface EnrichmentData {
   entries: Record<string, EnrichmentEntry>;
 }
 
+/** Live-enrichment freshness probe (`…/enrichment/version.json`). */
+export interface LiveEnrichmentVersion {
+  version: string;
+  generatedAt: string;
+  categoriesVersion: string;
+}
+
 // =========================================================
 // 2.9.3 Services (brew services)
 // =========================================================
@@ -576,6 +583,13 @@ export interface Settings {
       Google, separate from formulae.brew.sh). Suppressed by Offline
       Mode regardless. */
   vulnerabilityScanningEnabled: boolean;
+  /** When true, the app refreshes AI categories + descriptions live from
+      `brew-browser.zerologic.com/enrichment/*` (a tiny version probe, the full
+      categories.json when newer, and per-token entries on demand), overlaying
+      the bundled baseline. Off by default — same first-party host as Enhanced
+      Trending, new `…/enrichment/*` path; only the viewed package name is sent.
+      Suppressed by Offline Mode regardless. */
+  liveEnrichmentEnabled: boolean;
 }
 
 /** Defaults matching the Rust `Settings::default()`. Used when seeding
@@ -602,6 +616,9 @@ export const SETTINGS_DEFAULTS: Settings = {
   // v0.5.0 — opt-in vulnerability scanning via `brew vulns`. Off by
   // default; new trust boundary (OSV.dev + GHSA).
   vulnerabilityScanningEnabled: false,
+  // Opt-in live refresh of categories + descriptions. Off by default; same
+  // first-party host as Enhanced Trending, new /enrichment/* path.
+  liveEnrichmentEnabled: false,
 };
 
 // =========================================================

@@ -905,3 +905,31 @@ The opt-in posture, the per-feature gate composed with the master paranoid gate,
 - [ ] Cache files corrupt → empty cache returned, no panic (`vulns::cache::tests::load_corrupt_returns_empty`)
 - [ ] Subprocess argv validator rejects shell metas (`validate_formula_name_rejects_shell_meta`)
 - [ ] Disclosure list in `SettingsSectionNetwork.svelte` includes new path k entries with allowed/blocked indicators
+
+## 18. Live category & description updates endpoint audit
+
+**Scope:** the opt-in `brew-browser.zerologic.com/enrichment/*` endpoint — live refresh of the bundled AI categories + descriptions. Same first-party host as §16's trending-history, a distinct `/enrichment/*` path.
+
+### 18.1 Trust boundary & posture
+
+Same posture as §16: first-party infra (not Homebrew upstream), so we prove our own privacy rather than rely on a third party's. **Off by default** (`Settings::live_enrichment_enabled = false`). The composed gate `AppState::require_live_enrichment` is a verbatim mirror of `require_enhanced_trending`: master `require_network` (paranoid) first, then the per-feature toggle. `FirstLaunch` defaults the toggle false. Frontend stores add a third condition — AI Features must be on (categories/enrichment are AI features).
+
+### 18.2 New outbound paths
+
+| Request | Opened by | Gate |
+|---|---|---|
+| `GET …/enrichment/version.json` | `enrichment_live_version` IPC | `require_live_enrichment` |
+| `GET …/enrichment/categories.json` | `enrichment_live_categories` IPC (only when served `categoriesVersion` is newer) | `require_live_enrichment` |
+| `GET …/enrichment/entry/<token>.json` | `enrichment_live_entry` IPC (per package whose detail opens) | `require_live_enrichment` + token charset validation (`enrichment/live.rs::fetch_entry`, same allowlist as the trending client) |
+
+### 18.3 What the app sends / doesn't
+
+Sends: the package token being viewed (one GET per token), plus the version probe + the whole-categories pull (no token). Does **not** send: which packages are installed (only the one whose detail is open is fetched), any IP-identifying payload, cookies. Server logs are IP-redacted by the same site-wide Caddy `log` filter audited in §16 (the `/enrichment/*` block is a sibling `handle_path` under the same vhost). CSP: the host is already in `connect-src` (added for the updater + trending); the new path needs no CSP change.
+
+### 18.4 Serving
+
+Static JSON from Caddy, rendered nightly by `tools/pipeline/render_served.py` (deployed as an rsync'd copy under the build host's tool dir — no git on the host, no data committed back; the bundled baseline is the floor and live data overlays it). Misses (404 for an unknown/uncovered token) are normal and the app soft-falls back to the bundled entry.
+
+### 18.5 Verdict
+
+Feature gate, not a posture change — identical opt-in + paranoid-composition + soft-fail shape as Enhanced Trending. Disclosure copy lives in `SettingsSectionLiveEnrichment.svelte` and README's outbound enumeration (twelfth path).

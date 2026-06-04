@@ -29,6 +29,9 @@ use serde::{Deserialize, Serialize};
 use crate::commands::info::validate_package_name;
 use crate::error::BrewError;
 
+/// Opt-in live-fetch client for fresher categories/descriptions.
+pub mod live;
+
 // ---------- Security caps ----------
 
 /// Hard cap on the embedded gzip stream's raw byte length. Current

@@ -161,6 +161,22 @@ pub struct Settings {
     /// `require_vulnerability_scanning` denies even with this flag set.
     #[serde(default)]
     pub vulnerability_scanning_enabled: bool,
+
+    /// Opt-in *live* refresh of AI categories + descriptions. When **false**
+    /// (default), the app uses only the bundled `categories.json` /
+    /// `enrichment.json.gz` baked in at build time — no network. When **true**,
+    /// the app fetches fresher data from
+    /// `brew-browser.zerologic.com/enrichment/*` on catalog refresh + per
+    /// package shown: a tiny `version.json` probe, the full `categories.json`
+    /// when its version is newer, and per-token `entry/<token>.json` on demand.
+    /// Live data overlays the bundled baseline; misses fall back to bundled.
+    ///
+    /// Distinct trust boundary — same first-party host as Enhanced Trending
+    /// (`brew-browser.zerologic.com`), a new `…/enrichment/*` path. Only the
+    /// package name you're viewing is sent (one GET per token); no IP logged,
+    /// no cookies. Paranoid mode overrides this regardless.
+    #[serde(default)]
+    pub live_enrichment_enabled: bool,
 }
 
 /// Default factory for [`Settings::ai_features_enabled`] — separated
@@ -204,6 +220,10 @@ impl Default for Settings {
             // No `brew vulns` invocation, no OSV traffic, no GHSA lookups
             // until then.
             vulnerability_scanning_enabled: false,
+            // Off by default: the app ships with a bundled categories +
+            // enrichment baseline and contacts brew-browser.zerologic.com/
+            // enrichment/* only when the user opts in via Settings → Network.
+            live_enrichment_enabled: false,
         }
     }
 }
@@ -624,6 +644,7 @@ mod tests {
             skipped_update_versions: vec!["0.3.0".into(), "0.3.1".into()],
             enhanced_trending_enabled: true,
             vulnerability_scanning_enabled: true,
+            live_enrichment_enabled: true,
         };
         let written = persist(tmp.path(), s.clone()).await.expect("persist");
         assert_eq!(written, s);
@@ -684,6 +705,7 @@ mod tests {
             skipped_update_versions: Vec::new(),
             enhanced_trending_enabled: false,
             vulnerability_scanning_enabled: false,
+            live_enrichment_enabled: false,
         };
         let written = persist(tmp.path(), s).await.expect("persist");
         assert_eq!(written.catalog_stale_banner_days, Settings::CATALOG_STALE_DAYS_MAX);

@@ -19,6 +19,7 @@
   import { packages } from "$lib/stores/packages.svelte";
   import { env } from "$lib/stores/env.svelte";
   import { categories } from "$lib/stores/categories.svelte";
+  import { enrichment } from "$lib/stores/enrichment.svelte";
   import { catalog } from "$lib/stores/catalog.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import { discover } from "$lib/stores/discover.svelte";
@@ -138,6 +139,13 @@
       // store's own toast handling. Wrapping in catch() so a thrown promise
       // doesn't propagate out of refreshCatalog.
       vulnerabilities.scanIfNeeded().catch(() => {});
+
+      // Opt-in live enrichment: the served data may carry newer categories /
+      // descriptions. Pull newer categories and drop the per-token overlay so
+      // the next detail view re-fetches fresh. Both no-op unless the user
+      // opted in (toggle + not paranoid + AI on); soft-fail.
+      void categories.refreshLiveIfNewer();
+      enrichment.resetLive();
 
       toast.success("Refreshed", "brew taps + catalog + installed list all current");
     } catch (e) {
