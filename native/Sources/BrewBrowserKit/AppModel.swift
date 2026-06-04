@@ -935,7 +935,9 @@ final class AppModel {
     /// Activity job, then reload the list. Mirrors Tauri `brewfile_dump`.
     func dumpSnapshot(label: String) async {
         try? await snapshotStore.ensureDir()
-        let target = await snapshotStore.dumpTarget(forLabel: label)
+        // dumpTarget validates the (sanitized) id; it can't realistically throw,
+        // but guard rather than force-unwrap.
+        guard let target = try? await snapshotStore.dumpTarget(forLabel: label) else { return }
         let args = ["bundle", "dump", "--file=\(target.url.path)", "--force"]
         await startJob("Dumping Brewfile: \(label)", args: args, startedAt: Date().timeIntervalSince1970)
         await loadSnapshots()

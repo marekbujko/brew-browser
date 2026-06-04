@@ -49,16 +49,34 @@ actor SnapshotStore {
         }
     }
 
-    /// File URL for a snapshot id (`<dir>/<id>.Brewfile`).
-    func path(forID id: String) -> URL {
-        dir.appendingPathComponent("\(id).Brewfile")
+    /// Validate a snapshot id before it becomes a filesystem path. Ids only ever
+    /// originate from `sanitizeLabel` or a directory scan, so this is defense in
+    /// depth (parity with the Tauri `validate_brewfile_id` chokepoint from
+    /// PR #46) — it rejects `/`, `.`, `..`, NUL, and any separator/metacharacter
+    /// that could escape the snapshots dir.
+    static func validateID(_ id: String) throws {
+        guard !id.isEmpty, id.count <= 64 else {
+            throw SnapshotError.invalidID("Snapshot id must be 1–64 characters.")
+        }
+        let ok = id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+        guard ok else {
+            throw SnapshotError.invalidID("Snapshot id contains an illegal character: \(id)")
+        }
+    }
+
+    /// File URL for a snapshot id (`<dir>/<id>.Brewfile`). Throwing so the
+    /// allowlist runs at the single point an id becomes a path — the compiler
+    /// then routes every caller through validation.
+    func path(forID id: String) throws -> URL {
+        try Self.validateID(id)
+        return dir.appendingPathComponent("\(id).Brewfile")
     }
 
     /// Sanitize a label into a safe id and its `.Brewfile` URL — used by the
     /// caller to build the `--file=` arg for `brew bundle dump`.
-    func dumpTarget(forLabel label: String) -> (id: String, url: URL) {
+    func dumpTarget(forLabel label: String) throws -> (id: String, url: URL) {
         let id = Self.sanitizeLabel(label)
-        return (id, path(forID: id))
+        return (id, try path(forID: id))
     }
 
     /// All snapshots, newest first. Returns [] if the dir doesn't exist yet.
@@ -81,7 +99,7 @@ actor SnapshotStore {
     }
 
     func delete(id: String) throws {
-        let target = path(forID: id)
+        let target = try path(forID: id)
         guard FileManager.default.fileExists(atPath: target.path) else {
             throw SnapshotError.notFound(id)
         }
@@ -90,7 +108,7 @@ actor SnapshotStore {
 
     /// Copy a snapshot out to a user-chosen path (NSSavePanel-picked).
     func export(id: String, to dest: URL) throws {
-        let src = path(forID: id)
+        let src = try path(forID: id)
         guard FileManager.default.fileExists(atPath: src.path) else {
             throw SnapshotError.notFound(id)
         }
@@ -107,7 +125,7 @@ actor SnapshotStore {
         try Self.checkImportSource(src)
         try ensureDir()
         let id = Self.sanitizeLabel(label)
-        let dest = path(forID: id)
+        let dest = try path(forID: id)
         if FileManager.default.fileExists(atPath: dest.path) {
             try FileManager.default.removeItem(at: dest)
         }
@@ -215,11 +233,13 @@ actor SnapshotStore {
 enum SnapshotError: LocalizedError {
     case notFound(String)
     case unsafePath(String)
+    case invalidID(String)
 
     var errorDescription: String? {
         switch self {
         case .notFound(let id): return "Snapshot \"\(id)\" not found."
         case .unsafePath(let why): return why
+        case .invalidID(let why): return why
         }
     }
 }
