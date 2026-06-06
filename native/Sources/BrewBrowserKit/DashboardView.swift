@@ -574,7 +574,11 @@ struct ExposureCard: View {
                         Task { await model.scanAllVulns() }
                     } label: {
                         if model.vulnScanAllLoading {
-                            Label("Scanning…", systemImage: "arrow.clockwise")
+                            // Live spinner, not a static rotate-arrow.
+                            HStack(spacing: 5) {
+                                ProgressView().controlSize(.small)
+                                Text("Scanning…")
+                            }
                         } else {
                             Label("Scan now", systemImage: "arrow.clockwise")
                         }
