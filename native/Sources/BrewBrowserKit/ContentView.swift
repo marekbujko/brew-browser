@@ -512,7 +512,7 @@ struct VulnFooterRow: View {
                     Image(systemName: "circle.fill")
                         .font(.system(size: 8))
                         .foregroundStyle(.red)
-                    Text("\(model.vulnerableCount) vulnerable")
+                    Text("\(model.vulnerableCount) vulnerable package\(model.vulnerableCount == 1 ? "" : "s")")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
