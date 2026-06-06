@@ -15,6 +15,13 @@
     ui.openDrawer();
   }
 
+  /** Remove a single job from history. A still-running job is canceled first
+   *  so we don't drop tracking of a live brew process. */
+  function remove(job: { jobId: string; status: string }) {
+    if (job.status === "running") activity.cancel(job.jobId);
+    activity.removeJob(job.jobId);
+  }
+
   function fmtDuration(ms?: number): string {
     if (!ms) return "";
     const totalSec = Math.floor(ms / 1000);
@@ -50,7 +57,7 @@
     {:else}
       <ul class="list">
         {#each activity.jobs as j (j.jobId)}
-          <li>
+          <li class="row-wrap">
             <button class="row" onclick={() => open(j.jobId)}>
               <span class="status">
                 {#if j.status === "running"}<Loader size={14} class="spin" />
@@ -61,6 +68,14 @@
               <span class="label truncate">{j.label}</span>
               <span class="cmd mono truncate">{j.command}</span>
               <span class="dur">{fmtDuration(j.durationMs)}</span>
+            </button>
+            <button
+              class="del"
+              title="Remove from history"
+              aria-label="Remove {j.label} from history"
+              onclick={() => remove(j)}
+            >
+              <Trash2 size={14} />
             </button>
           </li>
         {/each}
@@ -85,20 +100,40 @@
   }
   .list-wrap { flex: 1; overflow-y: auto; min-height: 0; }
   .list { display: flex; flex-direction: column; }
+  .row-wrap {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .row-wrap:hover { background: var(--color-surface-sunken); }
   .row {
     display: grid;
     grid-template-columns: 28px 1fr 2fr 60px;
     align-items: center;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: var(--space-2) var(--space-3);
     min-height: 36px;
     text-align: left;
     color: var(--color-text-primary);
     font-size: var(--text-body);
-    border-bottom: 1px solid var(--color-border);
     gap: var(--space-3);
   }
-  .row:hover { background: var(--color-surface-sunken); }
+  /* Per-row remove — revealed on hover/focus, like the drawer's prior tab ×.
+     List management lives here, not on the (now view-only) drawer tabs. */
+  .del {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    align-self: stretch;
+    color: var(--color-text-muted);
+    opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease;
+  }
+  .row-wrap:hover .del,
+  .del:focus-visible { opacity: 1; }
+  .del:hover { color: var(--color-danger); }
   .status { display: inline-flex; }
   .status :global(.ok) { color: var(--color-success); }
   .status :global(.fail) { color: var(--color-danger); }
