@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// Bottom Activity drawer — live console for the active streaming job (install /
-/// upgrade / uninstall). Mirrors the Tauri `ActivityDrawer`: collapsed shows a
-/// one-line status; expanded shows the scrolling output with copy + cancel.
-/// Mounted as a bottom safe-area inset on the detail container.
+/// upgrade / uninstall / update). Mirrors the Tauri `ActivityDrawer`: collapsed
+/// shows a one-line status; expanded shows the scrolling output with copy,
+/// cancel, a completion footer, and (with 2+ jobs) a view-only segmented
+/// switcher. Mounted as a bottom bar below the split view.
 struct ActivityDrawer: View {
     @Bindable var model: AppModel
 
@@ -37,6 +38,7 @@ struct ActivityDrawer: View {
                 header(job)
                 if model.drawerOpen {
                     console(job)
+                    footer(job)
                 }
             }
             // Full bleed edge-to-edge so the bar covers the window's rounded
@@ -58,6 +60,12 @@ struct ActivityDrawer: View {
             statusIcon(job.status)
             Text(Self.displayLabel(job)).font(.callout.weight(.medium)).lineLimit(1)
             if job.status == .running {
+                // Live elapsed timer, refreshed each second off the timeline's
+                // own date (no Date() in the view body).
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    Text(Self.elapsed(since: job.startedAt, now: ctx.date))
+                        .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                }
                 ProgressView().controlSize(.small)
             }
             Spacer()
@@ -101,9 +109,9 @@ struct ActivityDrawer: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(Array(job.lines.enumerated()), id: \.offset) { idx, line in
-                        Text(line.text)
+                        Text(Self.stripANSI(line.text))
                             .font(.caption.monospaced())
-                            .foregroundStyle(line.stream == .stderr ? .orange : .primary)
+                            .foregroundStyle(Self.lineColor(line))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id(idx)
@@ -116,6 +124,29 @@ struct ActivityDrawer: View {
             .onChange(of: job.lines.count) { _, count in
                 if count > 0 { proxy.scrollTo(count - 1, anchor: .bottom) }
             }
+        }
+    }
+
+    /// Completion footer — duration + (on failure) a Report button. Nothing
+    /// while running. Mirrors the Tauri drawer footer.
+    @ViewBuilder
+    private func footer(_ job: ActivityJob) -> some View {
+        if job.status != .running {
+            HStack(spacing: 8) {
+                Text(Self.footerText(job))
+                    .font(.caption)
+                    .foregroundStyle(Self.footerColor(job.status))
+                if job.status == .failed {
+                    Button("Report to brew-browser") {
+                        ReportIssue.open(for: job, brewVersion: model.brewVersion)
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
         }
     }
 
@@ -134,11 +165,76 @@ struct ActivityDrawer: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
+
+    // MARK: - Formatting helpers (static; pure)
+
+    /// "m:ss" elapsed since an epoch-seconds start.
+    static func elapsed(since start: Double, now: Date) -> String {
+        let s = max(0, Int(now.timeIntervalSince1970 - start))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    /// Compact duration like "4.2s" from durationMs.
+    static func duration(_ ms: Int?) -> String? {
+        guard let ms else { return nil }
+        return String(format: "%.1fs", Double(ms) / 1000)
+    }
+
+    static func footerText(_ job: ActivityJob) -> String {
+        let dur = duration(job.durationMs)
+        switch job.status {
+        case .running:   return ""
+        case .succeeded: return dur.map { "Done in \($0)." } ?? "Done."
+        case .failed:
+            let base = dur.map { "Failed after \($0)." } ?? "Failed."
+            if let code = job.exitCode, code != 0 { return "\(base) Exit \(code)." }
+            return base
+        case .canceled:  return "Stopped."
+        }
+    }
+
+    static func footerColor(_ status: ActivityJob.JobStatus) -> Color {
+        switch status {
+        case .succeeded: return .green
+        case .failed:    return .red
+        default:         return .secondary
+        }
+    }
+
+    /// Content-based line coloring, matching the Tauri drawer's `classifyLine`.
+    static func lineColor(_ line: ActivityLine) -> Color {
+        let text = stripANSI(line.text)
+        let lower = text.lowercased()
+        if text.hasPrefix("==>") { return .accentColor }
+        if lower.contains("error:") { return .red }
+        if lower.contains("warning:") { return .orange }
+        if lower.hasPrefix("downloading") || lower.hasPrefix("pouring")
+            || lower.hasPrefix("installing") || lower.hasPrefix("fetching") {
+            return .green
+        }
+        if line.stream == .stderr { return .orange }
+        return .primary
+    }
+
+    /// Strip ANSI CSI escape sequences. brew runs with HOMEBREW_NO_COLOR so it
+    /// shouldn't emit any, but strip defensively (parity with Tauri).
+    static func stripANSI(_ s: String) -> String {
+        s.replacingOccurrences(
+            of: "\u{1B}\\[[0-9;]*[A-Za-z]",
+            with: "",
+            options: .regularExpression
+        )
+    }
 }
 
-/// The Activity panel — job history. Click a job to open it in the drawer.
+/// The Activity panel — job history. Click a job to open it in the drawer;
+/// swipe or right-click to remove a single job; "Clear Finished" clears them all.
 struct ActivityView: View {
     @Bindable var model: AppModel
+
+    /// Row the pointer is over — drives the hover-revealed remove button (parity
+    /// with the Tauri history list's hover trash).
+    @State private var hovered: UUID?
 
     var body: some View {
         Group {
@@ -146,27 +242,62 @@ struct ActivityView: View {
                 ContentUnavailableView(
                     "No activity yet",
                     systemImage: "list.bullet.rectangle",
-                    description: Text("Installs, upgrades, and uninstalls show up here.")
+                    description: Text("Installs, upgrades, uninstalls, and updates show up here.")
                 )
             } else {
                 List(model.jobs) { job in
-                    Button {
-                        model.activeJobId = job.id
-                        model.drawerOpen = true
-                    } label: {
-                        HStack(spacing: 10) {
-                            icon(job.status)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(job.label).fontWeight(.medium)
-                                Text(job.command).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Button {
+                            model.activeJobId = job.id
+                            model.drawerOpen = true
+                        } label: {
+                            HStack(spacing: 10) {
+                                icon(job.status)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(job.label).fontWeight(.medium)
+                                    Text(job.command).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(statusText(job)).font(.caption).foregroundStyle(.secondary)
+                                    if let dur = ActivityDrawer.duration(job.durationMs), job.status != .running {
+                                        Text(dur).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
                             }
-                            Spacer()
-                            Text(job.status.rawValue.capitalized)
-                                .font(.caption).foregroundStyle(.secondary)
+                            .contentShape(.rect)
                         }
-                        .contentShape(.rect)
+                        .buttonStyle(.plain)
+
+                        // Hover-revealed remove (parity with Tauri's row trash).
+                        // Reserves its gutter always so the row doesn't reflow on
+                        // hover; only hit-testable while shown.
+                        Button {
+                            model.removeJob(job.id)
+                        } label: {
+                            Image(systemName: "trash")
+                                .foregroundStyle(hovered == job.id ? Color.red : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .frame(width: 24)
+                        .opacity(hovered == job.id ? 1 : 0)
+                        .allowsHitTesting(hovered == job.id)
+                        .help("Remove from history")
                     }
-                    .buttonStyle(.plain)
+                    .onHover { inside in
+                        if inside { hovered = job.id }
+                        else if hovered == job.id { hovered = nil }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) { model.removeJob(job.id) } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) { model.removeJob(job.id) } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                    }
                 }
             }
         }
@@ -177,6 +308,14 @@ struct ActivityView: View {
                 }
             }
         }
+    }
+
+    /// Right-aligned status string; failures append their exit code.
+    private func statusText(_ job: ActivityJob) -> String {
+        if job.status == .failed, let code = job.exitCode, code != 0 {
+            return "Failed · exit \(code)"
+        }
+        return job.status.rawValue.capitalized
     }
 
     @ViewBuilder

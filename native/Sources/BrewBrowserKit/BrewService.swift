@@ -149,7 +149,9 @@ struct BrewService: Sendable {
     /// result. Lets the UI show live progress and surface failures instead of a
     /// dead spinner.
     enum StreamEvent: Sendable {
-        case line(String)
+        /// A line of output. `isStderr` distinguishes the stream so the UI can
+        /// style stderr (and the issue reporter can excerpt just stderr).
+        case line(String, isStderr: Bool)
         case finished(exitCode: Int32)
     }
 
@@ -199,7 +201,7 @@ struct BrewService: Sendable {
         let registry = self.registry
         return AsyncStream { continuation in
             guard let brew = Self.resolveBrewPath() else {
-                continuation.yield(.line("Error: couldn't find the brew executable."))
+                continuation.yield(.line("Error: couldn't find the brew executable.", isStderr: true))
                 continuation.yield(.finished(exitCode: 127))
                 continuation.finish()
                 return
@@ -211,11 +213,14 @@ struct BrewService: Sendable {
             // No TTY/stdin: a sudo/interactive prompt gets EOF → brew errors out
             // visibly instead of blocking on a read that never returns.
             process.standardInput = FileHandle.nullDevice
-            // Merge stdout+stderr into one pipe so ordering is preserved and we
-            // can't deadlock on one buffer filling while we read the other.
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+            // Separate pipes so each line is tagged with its real stream. Each
+            // pipe has its own readabilityHandler that continuously drains it, so
+            // there's no deadlock from one buffer filling while we read the other
+            // (ordering is by arrival, interleaved, the same as the Tauri engine).
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            process.standardOutput = outPipe
+            process.standardError = errPipe
             // Tell brew not to expect a terminal (disables spinners/color that
             // would otherwise garble the streamed lines).
             var env = ProcessInfo.processInfo.environment
@@ -223,22 +228,35 @@ struct BrewService: Sendable {
             env["HOMEBREW_NO_ENV_HINTS"] = "1"
             process.environment = env
 
-            let handle = pipe.fileHandleForReading
-            // Shared line buffer across the read + termination closures. A
-            // reference type with its own lock satisfies Swift 6 Sendable
-            // capture rules (a captured `var Data` can't cross the closures).
-            let accumulator = LineAccumulator()
-            handle.readabilityHandler = { fh in
+            let outHandle = outPipe.fileHandleForReading
+            let errHandle = errPipe.fileHandleForReading
+            // One accumulator per stream. Reference types with their own lock
+            // satisfy Swift 6 Sendable capture rules (a captured `var Data`
+            // can't cross the read + termination closures).
+            let outAcc = LineAccumulator()
+            let errAcc = LineAccumulator()
+            outHandle.readabilityHandler = { fh in
                 let chunk = fh.availableData
                 if chunk.isEmpty { return }
-                for line in accumulator.append(chunk) {
-                    continuation.yield(.line(line))
+                for line in outAcc.append(chunk) {
+                    continuation.yield(.line(line, isStderr: false))
+                }
+            }
+            errHandle.readabilityHandler = { fh in
+                let chunk = fh.availableData
+                if chunk.isEmpty { return }
+                for line in errAcc.append(chunk) {
+                    continuation.yield(.line(line, isStderr: true))
                 }
             }
             process.terminationHandler = { proc in
-                handle.readabilityHandler = nil
-                if let tail = accumulator.flush() {
-                    continuation.yield(.line(tail))
+                outHandle.readabilityHandler = nil
+                errHandle.readabilityHandler = nil
+                if let tail = outAcc.flush() {
+                    continuation.yield(.line(tail, isStderr: false))
+                }
+                if let tail = errAcc.flush() {
+                    continuation.yield(.line(tail, isStderr: true))
                 }
                 continuation.yield(.finished(exitCode: proc.terminationStatus))
                 continuation.finish()
@@ -248,7 +266,7 @@ struct BrewService: Sendable {
                 try process.run()
                 Task { await registry.register(process, for: jobId) }
             } catch {
-                continuation.yield(.line("Error launching brew: \(error.localizedDescription)"))
+                continuation.yield(.line("Error launching brew: \(error.localizedDescription)", isStderr: true))
                 continuation.yield(.finished(exitCode: -1))
                 continuation.finish()
             }

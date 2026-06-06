@@ -993,6 +993,23 @@ final class AppModel {
         if let pkg = detailPackage { await loadDetail(pkg) }
     }
 
+    // MARK: - Bulk actions (Dashboard Updates card)
+
+    /// `brew update` — refresh Homebrew's formula/cask metadata, as a streaming
+    /// Activity job. Mirrors Tauri's Dashboard "Update" action. Surfaces in the
+    /// Activity panel so a routine update leaves a visible record.
+    func updateHomebrew() async {
+        await startJob("Updating Homebrew", args: ["update"], startedAt: Date().timeIntervalSince1970)
+    }
+
+    /// `brew upgrade` — upgrade every outdated formula and cask, as a streaming
+    /// Activity job. Mirrors Tauri's Dashboard "Upgrade all". `startJob` calls
+    /// `refresh()` on completion, so the outdated count updates itself.
+    func upgradeAll() async {
+        guard outdatedCount > 0 else { return }
+        await startJob("Upgrading all packages", args: ["upgrade"], startedAt: Date().timeIntervalSince1970)
+    }
+
     // MARK: - Snapshots (Brewfile)
 
     /// Load the saved Brewfile snapshots from disk (newest first).
@@ -1146,18 +1163,24 @@ final class AppModel {
             startedAt: startedAt, status: .running, lines: [],
             exitCode: nil, durationMs: nil
         )
+        // Don't yank the drawer away from a job the user is actively watching:
+        // only auto-focus the new job if nothing is shown or the shown job has
+        // already finished. Either way the new job appears as a switcher segment.
+        let activeRunning = activeJobId.flatMap { id in jobs.first { $0.id == id } }?.status == .running
         jobs.insert(job, at: 0)
         if jobs.count > Self.maxJobs { jobs.removeLast(jobs.count - Self.maxJobs) }
-        activeJobId = jobId
-        drawerOpen = true
+        if !activeRunning {
+            activeJobId = jobId
+            drawerOpen = true
+        }
 
         var exit: Int32 = 0
-        let stream = await brew.runStreaming(jobId: jobId, args)
+        let stream = brew.runStreaming(jobId: jobId, args)
         for await event in stream {
             guard let idx = jobs.firstIndex(where: { $0.id == jobId }) else { continue }
             switch event {
-            case .line(let l):
-                jobs[idx].lines.append(ActivityLine(stream: .stdout, text: l))
+            case .line(let l, let isStderr):
+                jobs[idx].lines.append(ActivityLine(stream: isStderr ? .stderr : .stdout, text: l))
                 if jobs[idx].lines.count > Self.maxLinesPerJob {
                     jobs[idx].lines.removeFirst(jobs[idx].lines.count - Self.maxLinesPerJob)
                 }
@@ -1172,6 +1195,7 @@ final class AppModel {
             // exit 130/143 = SIGINT/SIGTERM → treat as canceled.
             jobs[idx].status = ok ? .succeeded : (canceled ? .canceled : .failed)
             jobs[idx].exitCode = exit
+            jobs[idx].durationMs = Int((Date().timeIntervalSince1970 - startedAt) * 1000)
         }
         // Background completion → macOS notification (opt-in; foreground uses
         // the Activity drawer). No-op unless enabled + app not frontmost.
@@ -1199,6 +1223,21 @@ final class AppModel {
         persistJobs()
         if let active = activeJobId, !jobs.contains(where: { $0.id == active }) {
             activeJobId = jobs.first?.id
+        }
+    }
+
+    /// Remove a single job from the history. If it's still running it's canceled
+    /// first (we don't leave an orphaned brew process tracked nowhere). Drawer
+    /// re-points to the next job, or hides if none remain.
+    func removeJob(_ id: UUID) {
+        if jobs.first(where: { $0.id == id })?.status == .running {
+            cancelJob(id)
+        }
+        jobs.removeAll { $0.id == id }
+        persistJobs()
+        if activeJobId == id {
+            activeJobId = jobs.first?.id
+            if jobs.isEmpty { drawerOpen = false }
         }
     }
 

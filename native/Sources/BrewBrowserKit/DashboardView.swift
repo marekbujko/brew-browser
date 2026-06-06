@@ -141,10 +141,13 @@ struct UpdatesCard: View {
                     }
                     .buttonStyle(.plain)
                     Spacer()
+                    Button("Update") { Task { await model.updateHomebrew() } }
+                        .controlSize(.small)
+                        .help("Run brew update to refresh package metadata")
                     Button("Choose…") { model.openOutdatedInLibrary() }
                         .controlSize(.small)
                     Button {
-                        // wired to brew upgrade in full port
+                        Task { await model.upgradeAll() }
                     } label: {
                         Label("Upgrade all (\(model.outdatedCount))", systemImage: "arrow.up.circle")
                     }
