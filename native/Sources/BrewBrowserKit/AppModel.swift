@@ -700,6 +700,40 @@ public final class AppModel {
     /// command and the palette's own close/activate paths.
     public var paletteOpen = false
 
+    // ---- In-window toasts (transient overlay; see Toast.swift) ----
+    /// The live toast queue, newest last. Rendered top-trailing by `ToastOverlay`
+    /// so it never overlaps the bottom Activity drawer. Mirrors the Tauri toast
+    /// store (`toast.svelte.ts`): success/info auto-dismiss after 4s, warning 7s,
+    /// errors persist until dismissed. The native build uses these for in-window
+    /// feedback (e.g. the GitHub scope/sign-in CTA); background job completion
+    /// still goes through `NotificationService` (system notifications).
+    var toasts: [ToastItem] = []
+
+    /// Push a toast onto the queue. Success/info/warning auto-dismiss on a timer;
+    /// errors stay until the user dismisses them (matching the Tauri timing).
+    func pushToast(_ kind: ToastKind, _ title: String, _ body: String? = nil, action: ToastAction? = nil) {
+        let item = ToastItem(kind: kind, title: title, body: body, action: action)
+        toasts.append(item)
+        guard let ms = kind.autoDismissMs else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(ms))
+            dismissToast(item.id)
+        }
+    }
+
+    /// Remove a toast by id (manual dismiss, or the auto-dismiss timer firing).
+    func dismissToast(_ id: UUID) {
+        toasts.removeAll { $0.id == id }
+    }
+
+    /// Run a toast action's handler, then dismiss the toast — clicking the action
+    /// implies acknowledgement (mirrors the Tauri `invokeAction`).
+    func invokeToastAction(_ id: UUID) {
+        guard let action = toasts.first(where: { $0.id == id })?.action else { return }
+        dismissToast(id)
+        action.handler()
+    }
+
     // ---- Vulnerabilities (Security card) ----
     var detailVulns: [VulnFinding] = []
     var detailVulnsScanned = false
@@ -861,6 +895,60 @@ public final class AppModel {
             return running > 0 ? running : nil
         default:        return nil
         }
+    }
+
+    // MARK: - Brew health (sidebar footer status row)
+
+    /// Health of the Homebrew environment, for the sidebar footer status dot.
+    /// Mirrors the Tauri `statusKind` derived value (`Sidebar.svelte:145-150`):
+    /// unknown until the first probe, then missing/running/ready.
+    enum BrewHealth { case ready, running, missing, unknown }
+
+    /// Derived brew-environment health. There's no separate doctor probe in the
+    /// native build — `loadDashboard` already resolves `brewVersion`/`brewPrefix`
+    /// (and surfaces failures in `loadError`), so we read those: a non-placeholder
+    /// version with no load error = ready; a load error = missing; an in-flight
+    /// brew job = running; nothing resolved yet = unknown. Matches the Tauri
+    /// ready/running/missing/unknown ladder.
+    var brewHealth: BrewHealth {
+        if loadError != nil { return .missing }
+        if jobs.contains(where: { $0.status == .running }) { return .running }
+        if !dashboardLoaded && brewVersion == "—" { return .unknown }
+        return brewVersion == "—" ? .missing : .ready
+    }
+
+    /// Short footer label — "brew 5.1.14" / "brew not found" / "brew". Mirrors
+    /// the Tauri `env.shortLabel` (`env.svelte.ts:37-42`).
+    var brewShortLabel: String {
+        switch brewHealth {
+        case .missing: return "brew not found"
+        case .unknown: return "brew"
+        default:       return brewVersion == "—" ? "brew" : "brew \(brewVersion)"
+        }
+    }
+
+    /// Tooltip for the footer status row — version + prefix, plus a running-jobs
+    /// note. Mirrors the Tauri `env.summary` + `statusTooltip`.
+    var brewStatusTooltip: String {
+        var base: String
+        switch brewHealth {
+        case .unknown: base = "Checking Homebrew…"
+        case .missing: base = loadError ?? "Homebrew not found on PATH."
+        default:       base = "Homebrew \(brewVersion) · prefix \(brewPrefix)"
+        }
+        let running = jobs.filter { $0.status == .running }.count
+        if running > 0 {
+            base += "\n\(running) brew operation\(running == 1 ? "" : "s") running"
+        }
+        return base
+    }
+
+    /// Re-probe the brew environment (footer status-dot click). Re-runs the
+    /// dashboard load, which re-resolves version/prefix and clears/sets
+    /// `loadError`. Mirrors the Tauri footer's `env.refresh()`.
+    func reprobeBrew() async {
+        dashboardLoaded = false
+        await loadDashboard()
     }
 
     /// Dependencies = installed formulae that weren't explicitly requested.
@@ -1147,9 +1235,12 @@ public final class AppModel {
 
     /// Star/unstar the detail repo. If signed out, kicks off sign-in first
     /// (the action re-runs after auth completes — mirrors Tauri's intercept).
+    /// A missing `public_repo` scope surfaces a "Re-authorize" toast rather than
+    /// silently failing, matching the Tauri scope-required CTA.
     func toggleStar() async {
         guard let hp = detailInfo?.githubHomepage else { return }
         guard await ensureGitHubSignIn() else { return }
+        guard requireScope("public_repo", action: "Star") else { return }
         let target = !(detailStarred ?? false)
         try? await githubService.setStar(homepage: hp, starred: target)
         detailStarred = target
@@ -1158,9 +1249,33 @@ public final class AppModel {
     func toggleWatch() async {
         guard let hp = detailInfo?.githubHomepage else { return }
         guard await ensureGitHubSignIn() else { return }
+        guard requireScope("public_repo", action: "Watch") else { return }
         let target = !(detailWatching ?? false)
         try? await githubService.setWatch(homepage: hp, watching: target)
         detailWatching = target
+    }
+
+    /// Guard an authed GitHub action on a required token scope. When the scope is
+    /// missing, surfaces an error toast with a "Re-authorize" action that re-runs
+    /// the device flow (which requests the full scope set — GitHub's consent only
+    /// shows the missing scopes) and returns false so the caller bails. Mirrors
+    /// the Tauri scope-required toast (`PackageDetail.svelte:528-540`).
+    private func requireScope(_ scope: String, action: String) -> Bool {
+        if githubStatus?.scopes.contains(scope) ?? false { return true }
+        pushToast(.error, "\(action) needs more access",
+                  "Needs the \"\(scope)\" GitHub permission. Click to grant it without signing out.",
+                  action: ToastAction(label: "Re-authorize") { [weak self] in
+                      Task { await self?.reauthorizeGitHub() }
+                  })
+        return false
+    }
+
+    /// Re-run the device flow to grant any missing scopes (the "Re-authorize"
+    /// toast action). Forces a fresh sign-in even though a token already exists,
+    /// so GitHub re-prompts for the full scope set.
+    func reauthorizeGitHub() async {
+        githubStatus = nil   // force ensureGitHubSignIn to re-run the device flow
+        _ = await ensureGitHubSignIn()
     }
 
     func fileIssue(title: String, body: String) async -> String? {

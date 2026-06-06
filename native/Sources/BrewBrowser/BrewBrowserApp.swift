@@ -53,6 +53,23 @@ struct AppCommands: Commands {
     @Bindable var model: AppModel
 
     var body: some Commands {
+        // Replace the stock "About brew-browser" menu item with one that opens
+        // the standard AppKit About panel carrying custom credits (the
+        // multi-agent build + Apple-native version/Homebrew lines) and a
+        // clickable Sponsor link. The standard panel is the most native option —
+        // it reads app name/version/icon from the Info.plist automatically; we
+        // only inject the credits + a few extra options. Mirrors the Tauri
+        // AboutModal (`AboutModal.svelte`). A "Sponsor brew-browser…" item is
+        // appended right below so the donate CTA lives in the app menu too.
+        CommandGroup(replacing: .appInfo) {
+            Button("About brew-browser") { showAboutPanel() }
+            Button("Sponsor brew-browser…") {
+                if let url = URL(string: AboutInfo.sponsorURL) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+
         // A dedicated "Go" menu hosts the section-nav shortcuts (⌘0–6) so they
         // appear together with their key equivalents, like a stock View menu.
         CommandMenu("Go") {
@@ -98,6 +115,52 @@ struct AppCommands: Commands {
     }
 }
 
+/// Shared About / Sponsor strings — the single source of truth for the standard
+/// About panel credits and the Sponsor menu item. The sponsor URL matches the
+/// toolbar heart + Settings → About (`ContentView.swift`, `SettingsView.swift`).
+enum AboutInfo {
+    static let sponsorURL = "https://github.com/sponsors/msitarzewski"
+    static let repoURL = "https://github.com/msitarzewski/brew-browser"
+}
+
+/// Open the standard AppKit About panel with custom credits. App name, version,
+/// and icon come from the Info.plist automatically (so a notarized release shows
+/// the right version with no extra wiring); we add the multi-agent build credits,
+/// the MIT/zero-telemetry affirmation, a repo line, and a clickable Sponsor link
+/// — the native parity for the Tauri AboutModal.
+@MainActor
+private func showAboutPanel() {
+    let credits = NSMutableAttributedString()
+    let body: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 11),
+        .foregroundColor: NSColor.secondaryLabelColor,
+    ]
+    credits.append(NSAttributedString(
+        string: "A native macOS GUI for Homebrew. MIT licensed — zero telemetry, zero accounts. Every outbound network call is documented in Settings → Network.\n\n",
+        attributes: body))
+    credits.append(NSAttributedString(
+        string: "Built with Agency Agents — the multi-agent toolkit that orchestrated the waves — powered by Claude Code running Opus. Thanks to the Homebrew project, every formula and cask maintainer, and Apple's SwiftUI.\n\n",
+        attributes: body))
+
+    // Clickable links (Sponsor + repo) — NSAttributedString `.link` makes the
+    // About panel render them as real, clickable links.
+    let linkBase = body.merging([.foregroundColor: NSColor.linkColor]) { _, new in new }
+    if let sponsor = URL(string: AboutInfo.sponsorURL) {
+        credits.append(NSAttributedString(
+            string: "Sponsor brew-browser",
+            attributes: linkBase.merging([.link: sponsor]) { _, new in new }))
+        credits.append(NSAttributedString(string: "   ", attributes: body))
+    }
+    if let repo = URL(string: AboutInfo.repoURL) {
+        credits.append(NSAttributedString(
+            string: "GitHub repo",
+            attributes: linkBase.merging([.link: repo]) { _, new in new }))
+    }
+
+    NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+    NSApp.activate(ignoringOtherApps: true)
+}
+
 /// Promotes a bare/unbundled launch (Xcode ⌘R) to a normal foreground app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -108,5 +171,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Real Dock/⌘-Tab icon, loaded from BrewBrowserKit's bundle — works for
         // the bare binary (Xcode ⌘R) too, not just the build-app.sh .app.
         applyDockIcon()
+        // Window size/position persistence (Bundle F — parity with Tauri PR #17).
+        // SwiftUI's WindowGroup leans on macOS state restoration, which doesn't
+        // reliably persist the frame for the SPM/bare-binary run paths (and is
+        // skipped after a force-quit). Setting an NSWindow `frameAutosaveName`
+        // makes AppKit save+restore the frame to UserDefaults independent of
+        // state restoration, so size+position survive relaunch in every run path.
+        persistWindowFrame()
+    }
+
+    /// Give the main window a `frameAutosaveName` so AppKit persists its size +
+    /// position across launches. The SwiftUI window isn't attached at
+    /// `applicationDidFinishLaunching`, so retry on the next run-loop turn until
+    /// it exists (bounded), then set the autosave name once.
+    @MainActor
+    private func persistWindowFrame(attempt: Int = 0) {
+        guard let window = NSApp.windows.first(where: { $0.canBecomeMain }) else {
+            // Window not created yet — try again shortly (cap the retries so a
+            // truly window-less run, e.g. tests, doesn't spin).
+            if attempt < 20 {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    self.persistWindowFrame(attempt: attempt + 1)
+                }
+            }
+            return
+        }
+        if window.frameAutosaveName.isEmpty {
+            window.setFrameAutosaveName("BrewBrowserMainWindow")
+        }
     }
 }

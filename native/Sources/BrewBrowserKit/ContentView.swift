@@ -35,6 +35,13 @@ public struct ContentView: View {
                     .tag(section)
             }
             .navigationTitle("brew-browser")
+            // Footer brew-health status row (Bundle F) — a colored dot + short
+            // label below the section list, mirroring the Tauri sidebar footer
+            // (`Sidebar.svelte:321-334`). Click re-probes the brew env. Stock
+            // `.safeAreaInset` keeps it pinned below the scrolling List.
+            .safeAreaInset(edge: .bottom) {
+                BrewStatusRow(model: model)
+            }
             // The inspector belongs to the section that opened it — navigating
             // to a different section dismisses it.
             .onChange(of: model.selection) { model.closeDetailIfSectionChanged() }
@@ -175,6 +182,9 @@ public struct ContentView: View {
         // inspector's own footer live entirely above it and nothing is covered.
         ActivityDrawer(model: model)
       }
+      // In-window toasts (Bundle F) — layered top-trailing over everything so
+      // they're clear of the bottom Activity drawer. See Toast.swift.
+      .overlay { ToastOverlay(model: model) }
       .task {
             model.loadJobs()
             if model.installed.isEmpty { await model.loadLibrary() }
@@ -416,5 +426,45 @@ struct PlaceholderView: View {
             systemImage: section.symbol,
             description: Text("Wired in the full port. The spike proves Dashboard + Library end-to-end.")
         )
+    }
+}
+
+/// Sidebar footer brew-health row — a colored SF Symbol dot + short label, with
+/// a tooltip and a click-to-re-probe action. The native analogue of the Tauri
+/// footer status button (`Sidebar.svelte:321-334`): green = ready, amber =
+/// running, red = missing, muted = unknown (first probe in flight). Stock plain
+/// `Button` in a thin bar; no chrome overrides.
+struct BrewStatusRow: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        Button {
+            Task { await model.reprobeBrew() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(dotColor)
+                Text(model.brewShortLabel)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .help(model.brewStatusTooltip)
+    }
+
+    private var dotColor: Color {
+        switch model.brewHealth {
+        case .ready:   return .green
+        case .running: return .orange
+        case .missing: return .red
+        case .unknown: return .secondary
+        }
     }
 }
