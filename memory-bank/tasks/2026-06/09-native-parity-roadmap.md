@@ -172,6 +172,23 @@ keys in `build-app.sh`'s Info.plist).
 That's the whole loop: in-app updater is complete; a release is `release.sh` +
 upload.
 
+### Two update feeds — keep BOTH supported
+The shipped Tauri build has its OWN updater that must keep working alongside the
+native Sparkle feed. They are fully independent (different files, signing, and
+artifact hosts) and coexist under the same Caddy root
+(`/home/michael/Sites/brew-browser` on the build host — public domain only in
+committed files):
+
+| | Manifest (zerologic) | Signing | Artifacts |
+|---|---|---|---|
+| **Tauri** | `/updater.json` | minisign (`tauri.conf.json` pubkey) | GitHub Releases (`createUpdaterArtifacts`) |
+| **native** | `/appcast.xml` | Sparkle ed25519 (`SUPublicEDKey`) | `/native/*.zip` on zerologic |
+
+A release that bumps the version must refresh the relevant feed(s): Tauri →
+rebuild via `tauri build` (its action regenerates `updater.json` + uploads the
+GitHub Release asset); native → `release.sh` + upload `appcast.xml` + the zip.
+Never overwrite one feed's file with the other's — `/appcast.xml` ≠ `/updater.json`.
+
 ## Open questions for the user
 1. **Self-updater (C)**: full Sparkle, or UI + notify only (defer real self-update)?
    → Resolved 2026-06-06: full Sparkle. Implemented in Bundle C.
