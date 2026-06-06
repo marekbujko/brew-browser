@@ -156,7 +156,12 @@ struct CatalogFreshnessStrip: View {
                 Task { await model.refreshCatalogFromBrewSh() }
             } label: {
                 if model.catalogRefreshing {
-                    Label("Refreshing…", systemImage: "arrow.clockwise")
+                    // Live spinner (not a static rotate-arrow) so the button
+                    // shows real motion while the sync runs.
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small)
+                        Text("Refreshing…")
+                    }
                 } else if stale {
                     Label("Refresh from brew.sh →", systemImage: "arrow.clockwise")
                 } else {

@@ -348,6 +348,10 @@ public final class AppModel {
         catalogRefreshing = true
         catalogRefreshError = nil
         defer { catalogRefreshing = false }
+        // Mirror the Tauri catalog sync: run `brew update` as a streaming Activity
+        // job first, so the refresh shows live in the Activity drawer (and the
+        // brew metadata is fresh) before we pull the catalog JSON from brew.sh.
+        await startJob("Updating Homebrew", args: ["update"], startedAt: Date().timeIntervalSince1970)
         do {
             let summary = try await catalogService.refresh()
             // Swap the freshly-parsed catalog in + rebuild the token index.

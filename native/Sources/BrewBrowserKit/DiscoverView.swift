@@ -66,7 +66,10 @@ struct DiscoverView: View {
                 Task { await model.refreshCatalogFromBrewSh() }
             } label: {
                 if model.catalogRefreshing {
-                    Label("Refreshing…", systemImage: "arrow.clockwise")
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small)
+                        Text("Refreshing…")
+                    }
                 } else {
                     Label("Refresh from brew.sh →", systemImage: "arrow.clockwise")
                 }
