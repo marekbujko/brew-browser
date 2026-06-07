@@ -39,6 +39,7 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr, clippy::dbg_macro)]
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -265,6 +266,23 @@ pub trait KeychainSlot: Send + Sync {
 
     /// Delete the entry, treating "no such entry" as success.
     fn delete(&self, account: &str) -> Result<(), BrewError>;
+
+    /// Read several accounts at once, returning only those with a value.
+    ///
+    /// Default: one `read` per account — N separate Keychain accesses, hence N
+    /// auth prompts. macOS [`SystemKeychain`] overrides this with a single
+    /// `SecItemCopyMatching(kSecMatchLimitAll)` so the launch-time sign-in check
+    /// (`status`) costs ONE prompt instead of three. (Mirrors native's
+    /// `keychainReadAll`.) The default keeps tests + non-macOS correct.
+    fn read_many(&self, accounts: &[&str]) -> Result<HashMap<String, String>, BrewError> {
+        let mut out = HashMap::new();
+        for &account in accounts {
+            if let Some(value) = self.read(account)? {
+                out.insert(account.to_string(), value);
+            }
+        }
+        Ok(out)
+    }
 }
 
 /// Production keychain backed by `keyring::Entry` against the macOS
@@ -278,6 +296,54 @@ impl SystemKeychain {
                 message: format!("entry({KEYCHAIN_SERVICE}, {account}): {e}"),
             }
         })
+    }
+
+    /// macOS: read every generic-password item stored under `KEYCHAIN_SERVICE`
+    /// in ONE `SecItemCopyMatching` (`kSecMatchLimitAll`), keyed by account.
+    /// One Keychain access → one auth prompt, vs one prompt per account when
+    /// read individually. `errSecItemNotFound` (nothing stored yet) maps to an
+    /// empty map, not an error. Verbatim intent of native's `keychainReadAll`.
+    #[cfg(target_os = "macos")]
+    fn read_all_batch() -> Result<HashMap<String, String>, BrewError> {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit, SearchResult};
+
+        /// `errSecItemNotFound` — no matching items, i.e. signed out.
+        const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
+
+        let results = match ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(KEYCHAIN_SERVICE)
+            .load_attributes(true)
+            .load_data(true)
+            .limit(Limit::All)
+            .search()
+        {
+            Ok(items) => items,
+            Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => return Ok(HashMap::new()),
+            Err(e) => {
+                return Err(BrewError::KeychainUnavailable {
+                    message: format!("batch read ({KEYCHAIN_SERVICE}): {e}"),
+                })
+            }
+        };
+
+        // simplify_dict() returns the item's attributes as string pairs; the
+        // account lives under "acct" (kSecAttrAccount) and the secret under
+        // "v_Data" (kSecValueData). Our values (token/scopes JSON/username) are
+        // all UTF-8, so the lossy conversion is lossless here.
+        let mut out = HashMap::new();
+        for result in results {
+            if let SearchResult::Dict(_) = result {
+                if let Some(dict) = result.simplify_dict() {
+                    if let (Some(account), Some(value)) =
+                        (dict.get("acct"), dict.get("v_Data"))
+                    {
+                        out.insert(account.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -312,6 +378,15 @@ impl KeychainSlot for SystemKeychain {
             }),
         }
     }
+
+    /// macOS: collapse the per-account reads into one batched Keychain access
+    /// (one auth prompt). `accounts` is ignored — the batch returns every item
+    /// under the service and the caller picks the keys it needs. On non-macOS
+    /// this method is absent, so the trait default (per-account reads) applies.
+    #[cfg(target_os = "macos")]
+    fn read_many(&self, _accounts: &[&str]) -> Result<HashMap<String, String>, BrewError> {
+        Self::read_all_batch()
+    }
 }
 
 // ---------- Status + sign-out (sync) ----------
@@ -322,18 +397,26 @@ impl KeychainSlot for SystemKeychain {
 /// alongside the token. If the token row is missing, returns the
 /// "not signed in" shape.
 pub fn status_with(keychain: &dyn KeychainSlot) -> Result<GithubStatusDto, BrewError> {
-    let token = keychain.read(KEYCHAIN_ACCOUNT_TOKEN)?;
-    if token.is_none() {
+    // ONE batched Keychain read for token + username + scopes (macOS: one auth
+    // prompt; other backends: the trait default does per-account reads).
+    let all = keychain.read_many(&[
+        KEYCHAIN_ACCOUNT_TOKEN,
+        KEYCHAIN_ACCOUNT_USERNAME,
+        KEYCHAIN_ACCOUNT_SCOPES,
+    ])?;
+
+    if !all.contains_key(KEYCHAIN_ACCOUNT_TOKEN) {
         return Ok(GithubStatusDto {
             signed_in: false,
             username: None,
             scopes: Vec::new(),
         });
     }
-    let username = keychain.read(KEYCHAIN_ACCOUNT_USERNAME)?;
-    let scopes_raw = keychain.read(KEYCHAIN_ACCOUNT_SCOPES)?;
-    let scopes: Vec<String> = scopes_raw
-        .and_then(|s| serde_json::from_str(&s).ok())
+
+    let username = all.get(KEYCHAIN_ACCOUNT_USERNAME).cloned();
+    let scopes: Vec<String> = all
+        .get(KEYCHAIN_ACCOUNT_SCOPES)
+        .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
     Ok(GithubStatusDto {
         signed_in: true,

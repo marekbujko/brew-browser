@@ -7,6 +7,18 @@
 - ✅ `swift build` clean. See `tasks/2026-06/01-native-live-enrichment-notifications.md` + memory `project-live-enrichment`.
 - Native reverse-parity remaining: **Services panel** (last big one).
 
+## 2026-06-02 — Tauri←native parity (branch `tauri-parity`)
+
+- ✅ Shared `PackageRowIcon.svelte` (Tauri analog of native `PackageIcon`); list icons added to Discover + Trending (had none), Library routed through it.
+- ✅ Detail panel: centered 64px app icon.
+- ✅ Dashboard: Composition pie + Top-categories side-by-side on wide panes; chips in card header; equal-height cards; charts matched to native specs (outer radius 60, donut inner ratio 0.6, filled `<path>` pie, vertical centering).
+- ✅ Keychain: one batched `SecItemCopyMatching` (one prompt) via `security-framework`, mirroring native `keychainReadAll`.
+- ✅ Trending velocity badge: canonical banded threshold (≥1.5 🔥 / ≤0.7 ❄️ / neutral).
+- ✅ `npm run check` 0 errors; Rust compiles; verified via screenshots. Committed + pushed.
+- ↩️ Reverse-parity (native←Tauri) tracked in memory `project-native-reverse-parity`: legend icons, banded velocity, Snapshots/Services panels.
+
+See `tasks/2026-06/01-tauri-native-parity.md` + `decisions.md#2026-06-02`.
+
 ## 2026-05-24 (overnight)
 
 ### Done since last sync
@@ -834,7 +846,7 @@ Regression-pinned by `vulns::client::tests::raw_scan_result_parses_real_brew_vul
 
 ## 2026-05-31 (native Swift / Liquid Glass rebuild — experiment branch)
 
-Off-`main` experiment on branch `experiment/native-swift-liquid-glass`: a faithful **port** of the Tauri app's interface to Swift 6 + SwiftUI + Liquid Glass (macOS 26 Tahoe), in `native/` as a Swift Package. Motivation: answer the "Tauri isn't native" chatter with a real artifact, and evaluate Liquid Glass. Data sources + functionality stay identical to the Tauri app (port, not redesign). Decision in `decisions.md` (2026-05-30 ADR); full task record at `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`; build loop + source map in `native/README.md`.
+Off-`main` experiment on branch `experiment/native-swift-liquid-glass`: a faithful **port** of the Tauri app's interface to Swift 6 + SwiftUI + Liquid Glass (macOS 26 Tahoe), in `native/` as a Swift Package. Motivation: answer the "Tauri isn't native" chatter with a real artifact, and evaluate Liquid Glass. Data sources + functionality stay identical to the Tauri app (port, not redesign). Decision in `decisions.md` (2026-05-30 ADR); full task record at `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`; build loop + source map in `native/README.md`.
 
 ### Done + building clean (`./build-app.sh debug`, 0 errors)
 
@@ -859,7 +871,7 @@ Off-`main` experiment on branch `experiment/native-swift-liquid-glass`: a faithf
 
 ## 2026-06-01 (native rebuild — Library panel + fixes, committed)
 
-First commit of the `native/` tree landed (`584f64f`, 2026-05-31) with a `.gitignore` keeping `.build/` + `BrewBrowser.app` out. Then the **Library panel** + a run of fixes, all user-verified and committed. Detail in `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`.
+First commit of the `native/` tree landed (`584f64f`, 2026-05-31) with a `.gitignore` keeping `.build/` + `BrewBrowser.app` out. Then the **Library panel** + a run of fixes, all user-verified and committed. Detail in `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`.
 
 - **Library panel** — native SwiftUI `Table` (sortable columns: Name / Description[AI-gated] / Version / Type / Outdated), **centered** segmented type filter (All / Formulae / Casks / Outdated w/ counts), row→detail inspector. `LibraryFilter` enum + `LibraryRow` + `sortedLibraryRows` on `AppModel`. macOS-default `Table` + segmented control, no overrides.
 - **Library crash fixed** — clicking the Library tab crashed (SIGTRAP). Real cause (found via `lldb` on `objc_exception_throw`, since the `.ips` hid it): **two `.searchable` in one toolbar** → duplicate `com.apple.SwiftUI.search` item. Collapsed to one shared toolbar search field.

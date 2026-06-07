@@ -1,13 +1,22 @@
 /**
- * Static map of Lucide icon-name → Svelte component for the 19 categories
- * declared in `src-tauri/data/categories.json`. Using a static map keeps the
- * bundler happy (no dynamic imports), keeps load instant (no async resolution
- * at render time), and makes the supported icon set explicit.
+ * Lucide icon-name → Svelte component binding for the category icons.
  *
- * If `tools/categorize/categorize.py` ever introduces a new category, the
- * Lucide icon for that slug must be added here too. The Discover grid falls
- * back to `HelpCircle` for any unknown name so a missing entry won't crash —
- * but it WILL look out of place, so add the mapping.
+ * The icon CHOICE is data-driven: it lives once in
+ * `tools/categorize/categorize.py` (the `CATEGORIES` taxonomy) and is emitted
+ * to `src-tauri/data/categories.json` as `icon` (this Lucide name, for the web
+ * UI) and `iconSF` (an SF Symbol name, consumed directly by the native macOS
+ * UI). Neither UI re-decides icons in code.
+ *
+ * This map is NOT a second source of truth — it's purely the bundler binding
+ * from the data-provided Lucide name to its tree-shakeable Svelte component.
+ * Lucide-svelte has no render-by-name without bundling all ~1600 icons, so the
+ * 19 components we use must be statically imported here. (Native needs no such
+ * map: SF Symbols render from a plain string, so it reads `iconSF` directly.)
+ *
+ * Adding a category in `categorize.py`? Pick its Lucide + SF names there; then
+ * add the one matching Lucide import below. Unknown names fall back to
+ * `HelpCircle` so a missing import never crashes — but it WILL look out of
+ * place, so keep this in sync with the taxonomy.
  */
 
 import type { Component } from "svelte";

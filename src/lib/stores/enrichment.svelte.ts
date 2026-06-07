@@ -12,8 +12,9 @@
  * fetches once per process and caches the result.
  */
 
-import { enrichmentData } from "$lib/api";
+import { enrichmentData, enrichmentLiveEntry } from "$lib/api";
 import { settings } from "$lib/stores/settings.svelte";
+import { bareToken } from "$lib/util/token";
 import type { EnrichmentData, EnrichmentEntry } from "$lib/types";
 
 class EnrichmentStore {
@@ -22,6 +23,11 @@ class EnrichmentStore {
   error: string | null = $state(null);
 
   private loadPromise: Promise<void> | null = null;
+
+  /** Live overlay: per-token entries fetched from the opt-in endpoint,
+      layered over the bundled `data.entries`. Empty unless the user opted in. */
+  liveEntries: Record<string, EnrichmentEntry> = $state({});
+  private liveAttempted = new Set<string>();
 
   /** Lazy-load on first access. Safe to call repeatedly — only fetches once.
       Failures are recorded on `this.error` but never rethrown; the store
@@ -52,8 +58,14 @@ class EnrichmentStore {
    */
   lookup(token: string): EnrichmentEntry | null {
     if (!settings.effective.aiFeaturesEnabled) return null;
-    if (!this.data) return null;
-    return this.data.entries[token] ?? null;
+    // Live overlay wins over the bundled baseline.
+    const hit = this.liveEntries[token] ?? this.data?.entries[token];
+    if (hit) return hit;
+    // Tap-qualified token (`user/tap/name`) → retry the bare name the
+    // enrichment is keyed by (live overlay still preferred over bundled).
+    const bare = bareToken(token);
+    if (bare === token) return null;
+    return this.liveEntries[bare] ?? this.data?.entries[bare] ?? null;
   }
 
   /** Friendly-name short-circuit: returns `friendlyName` if available AND
@@ -82,6 +94,43 @@ class EnrichmentStore {
    *  re-deriving the gate. */
   get visible(): boolean {
     return settings.effective.aiFeaturesEnabled && this.data !== null;
+  }
+
+  /** Opt-in gate: live enrichment needs the toggle, network (not paranoid),
+   *  and AI features on (enrichment is an AI feature). */
+  private get liveAllowed(): boolean {
+    return (
+      settings.effective.liveEnrichmentEnabled === true &&
+      settings.effective.paranoidMode !== true &&
+      settings.effective.aiFeaturesEnabled === true
+    );
+  }
+
+  /** Fetch a token's live enrichment on demand (e.g. when its detail panel
+   *  opens) and overlay it on the bundled entry. Soft-fail + deduped: each
+   *  token is attempted at most once per refresh cycle; a 404 (unknown token)
+   *  is normal and leaves the bundled entry in place. */
+  async ensureLive(token: string): Promise<void> {
+    if (!this.liveAllowed) return;
+    // Tap-qualified tokens (`user/tap/name`) carry a `/` the served path +
+    // allowlist reject; fetch, dedupe, and key by the bare name — matching
+    // `lookup`'s bare fallback and the native build's `ensureLiveEnrichment`.
+    const key = bareToken(token);
+    if (this.liveAttempted.has(key)) return;
+    this.liveAttempted.add(key);
+    try {
+      const entry = await enrichmentLiveEntry(key);
+      this.liveEntries = { ...this.liveEntries, [key]: entry };
+    } catch {
+      // keep bundled
+    }
+  }
+
+  /** Drop the live overlay so the next `ensureLive` re-fetches fresh data.
+   *  Called on catalog refresh (the served tree may have changed). */
+  resetLive(): void {
+    this.liveAttempted.clear();
+    this.liveEntries = {};
   }
 }
 

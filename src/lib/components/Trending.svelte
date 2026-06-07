@@ -7,6 +7,7 @@
 
   import Button from "./Button.svelte";
   import Pill from "./Pill.svelte";
+  import PackageRowIcon from "./PackageRowIcon.svelte";
   import LoadingState from "./LoadingState.svelte";
   import EmptyState from "./EmptyState.svelte";
   import SortableHeader from "./SortableHeader.svelte";
@@ -52,12 +53,13 @@
     return fallback ?? null;
   }
 
-  /** Velocity tier classification for the badge: >=1.5 surging,
-      <=0.5 cooling, otherwise neutral. */
+  /** Velocity tier classification for the badge, matching velocity_index's
+      documented semantics (1.0 ≈ steady): >=1.5 surging, <=0.7 cooling,
+      otherwise neutral. Canonical rule shared with the native build. */
   function velocityTier(v: number | null): "surge" | "cool" | "neutral" | "none" {
     if (v === null) return "none";
     if (v >= 1.5) return "surge";
-    if (v <= 0.5) return "cool";
+    if (v <= 0.7) return "cool";
     return "neutral";
   }
 
@@ -137,7 +139,7 @@
       </div>
       <span class="ago text-muted">{agoLabel}</span>
       <span class="refresh-wrap">
-        <Button size="sm" variant="ghost" onclick={() => trending.load(true)} title="Refresh (⌘R)" ariaLabel="Refresh trending">
+        <Button size="sm" variant="ghost" loading={trending.loading} onclick={() => trending.load(true)} title="Refresh (⌘R)" ariaLabel="Refresh trending">
           {#snippet icon()}<RefreshCw size={14} />{/snippet}
           Refresh
         </Button>
@@ -183,11 +185,14 @@
               onclick={() => openEntry(e.name, e.kind)}
             >
               <span class="rank">{e.rank}</span>
-              <span class="name truncate">
-                <span class="name-text">{e.name}</span>
-                {#if friendlyOf(e.name)}
-                  <span class="friendly-subtitle">{friendlyOf(e.name)}</span>
-                {/if}
+              <span class="name-cell">
+                <PackageRowIcon token={e.name} kind={e.kind} resolveCask />
+                <span class="name truncate">
+                  <span class="name-text">{e.name}</span>
+                  {#if friendlyOf(e.name)}
+                    <span class="friendly-subtitle">{friendlyOf(e.name)}</span>
+                  {/if}
+                </span>
               </span>
               <span class="desc truncate text-muted">{enrichment.summaryOf(e.name) ?? catalog.descOf(e.name, e.kind) ?? ""}</span>
               <span class="version truncate text-muted">{catalog.versionOf(e.name, e.kind) ?? ""}</span>
@@ -349,6 +354,14 @@
     border-bottom: 1px solid var(--color-border);
   }
   .row:hover { background: var(--color-surface-sunken); }
+  /* Icon + name stack share the name column (matches native's iconNameCell). */
+  .name-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    overflow: hidden;
+  }
   .row.selected {
     background: var(--color-selection-strong);
     color: var(--color-text-inverse);

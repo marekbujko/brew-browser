@@ -7,7 +7,7 @@
  * fetches once per process and caches the result.
  */
 
-import { categoriesData } from "$lib/api";
+import { categoriesData, enrichmentLiveCategories, enrichmentLiveVersion } from "$lib/api";
 import { settings } from "$lib/stores/settings.svelte";
 import type { CategoriesData, PackageKind } from "$lib/types";
 
@@ -43,6 +43,35 @@ class CategoriesStore {
       }
     })();
     return this.loadPromise;
+  }
+
+  /** Opt-in gate: live categories need the toggle, network (not paranoid),
+   *  and AI features on (categories are an AI feature). */
+  private get liveAllowed(): boolean {
+    return (
+      settings.effective.liveEnrichmentEnabled === true &&
+      settings.effective.paranoidMode !== true &&
+      settings.effective.aiFeaturesEnabled === true
+    );
+  }
+
+  /** Pull the live categories file only when the served version is newer than
+   *  what we hold, replacing the bundled/cached data. Soft-fail (keeps current
+   *  data on any error). Called on catalog refresh. Returns true if updated. */
+  async refreshLiveIfNewer(): Promise<boolean> {
+    if (!this.liveAllowed) return false;
+    await this.ensureLoaded();
+    try {
+      const probe = await enrichmentLiveVersion();
+      const have = this.data?.version ?? "";
+      // Versions are ISO/date strings — lexicographic compare is chronological.
+      if (probe.categoriesVersion <= have) return false;
+      const fresh = await enrichmentLiveCategories();
+      this.data = fresh;
+      return true;
+    } catch {
+      return false; // keep current data
+    }
   }
 
   /**

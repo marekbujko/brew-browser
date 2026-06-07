@@ -128,6 +128,8 @@ pub struct RawCask {
     #[serde(default)]
     pub full_token: Option<String>,
     #[serde(default)]
+    pub name: Vec<String>,
+    #[serde(default)]
     pub tap: Option<String>,
     #[serde(default)]
     pub desc: Option<String>,
@@ -270,6 +272,8 @@ impl RawFormula {
             installed_paths: Vec::new(),
             analytics30d_installs,
             raw_json,
+            exists_in_applications: false,
+            is_mas: false,
         }
     }
 }
@@ -366,6 +370,38 @@ impl RawCask {
             _ => Vec::new(),
         };
 
+        let (exists_in_applications, is_mas) = if cfg!(target_os = "macos") {
+            let mut candidates = cask_app_filenames(&self.artifacts);
+            let token = self.token.trim();
+            if !token.is_empty() {
+                let mut chars = token.chars();
+                if let Some(first) = chars.next() {
+                    let capitalized = first.to_uppercase().collect::<String>() + chars.as_str();
+                    candidates.push(format!("{}.app", capitalized));
+                }
+                candidates.push(format!("{}.app", token));
+            }
+            for n in &self.name {
+                let n_trimmed = n.trim();
+                if !n_trimmed.is_empty() {
+                    candidates.push(format!("{}.app", n_trimmed));
+                }
+            }
+            let mut found = false;
+            let mut mas = false;
+            for name in &candidates {
+                if check_app_exists_macos(name) {
+                    found = true;
+                    if check_app_is_mas_macos(name) {
+                        mas = true;
+                    }
+                }
+            }
+            (found, mas)
+        } else {
+            (false, false)
+        };
+
         PackageDetail {
             package: pkg,
             caveats: self.caveats.clone(),
@@ -378,6 +414,8 @@ impl RawCask {
             installed_paths: extract_cask_paths(&self.artifacts),
             analytics30d_installs: None,
             raw_json,
+            exists_in_applications,
+            is_mas,
         }
     }
 }
@@ -428,6 +466,62 @@ fn extract_cask_paths(artifacts: &Option<serde_json::Value>) -> Vec<String> {
         }
     }
     out
+}
+
+fn cask_app_filenames(artifacts: &Option<serde_json::Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(arr) = artifacts.as_ref().and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for entry in arr {
+        let Some(obj) = entry.as_object() else {
+            continue;
+        };
+        if let Some(serde_json::Value::Array(apps)) = obj.get("app") {
+            for a in apps {
+                if let Some(s) = a.as_str() {
+                    out.push(s.to_string());
+                } else if let Some(o) = a.as_object() {
+                    if let Some(s) = o.get("target").and_then(|v| v.as_str()) {
+                        out.push(s.to_string());
+                    } else if let Some(s) = o.get("source").and_then(|v| v.as_str()) {
+                        let basename = std::path::Path::new(s)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| s.to_string());
+                        out.push(basename);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn check_app_exists_macos(filename: &str) -> bool {
+    if !filename.ends_with(".app") || filename.contains('/') || filename.contains("..") {
+        return false;
+    }
+    let mut candidates = Vec::with_capacity(2);
+    candidates.push(std::path::PathBuf::from("/Applications").join(filename));
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("Applications").join(filename));
+    }
+    candidates.into_iter().any(|p| p.is_dir())
+}
+
+fn check_app_is_mas_macos(filename: &str) -> bool {
+    if !filename.ends_with(".app") || filename.contains('/') || filename.contains("..") {
+        return false;
+    }
+    let mut candidates = Vec::with_capacity(2);
+    candidates.push(std::path::PathBuf::from("/Applications").join(filename));
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("Applications").join(filename));
+    }
+    candidates.into_iter().any(|p| {
+        p.is_dir() && p.join("Contents").join("_MASReceipt").join("receipt").exists()
+    })
 }
 
 // ---------- brew search plain stdout ----------
@@ -824,6 +918,7 @@ mod tests {
         RawCask {
             token: "demo".into(),
             full_token: None,
+            name: Vec::new(),
             tap: None,
             desc: None,
             homepage: homepage.map(|s| s.to_string()),
@@ -927,5 +1022,63 @@ mod tests {
             analytics: None,
         };
         assert!(matches!(raw.to_package().icon_source, IconSource::None));
+    }
+
+    #[test]
+    fn test_raw_cask_exists_in_applications_fallback_candidates() {
+        // A cask whose derived candidates cannot exist on any machine — the
+        // detection must be deterministically false (no panic, no false hit).
+        let raw = RawCask {
+            token: "zz-brew-browser-nonexistent-cask".into(),
+            full_token: None,
+            name: vec!["ZZ Brew Browser Nonexistent".into()],
+            tap: None,
+            desc: None,
+            homepage: None,
+            url: None,
+            version: None,
+            installed: None,
+            pinned: false,
+            outdated: false,
+            caveats: None,
+            conflicts_with: None,
+            depends_on: None,
+            artifacts: None,
+        };
+        let detail = raw.to_detail(serde_json::Value::Null);
+        assert!(!detail.exists_in_applications, "bogus cask must not resolve to an app bundle");
+        assert!(!detail.is_mas, "bogus cask must not be flagged as a Mac App Store app");
+    }
+
+    #[test]
+    fn check_app_exists_rejects_unsafe_or_missing_names() {
+        // Path-traversal, separators, and non-.app inputs are rejected before
+        // any filesystem access — deterministic on every platform.
+        assert!(!check_app_exists_macos("../Evil.app"), "path traversal must be rejected");
+        assert!(!check_app_exists_macos("sub/dir/App.app"), "separators must be rejected");
+        assert!(!check_app_exists_macos("NotAnApp"), "missing .app suffix must be rejected");
+        assert!(!check_app_exists_macos(""), "empty name must be rejected");
+        // Well-formed but guaranteed-absent bundle name → no false hit.
+        assert!(!check_app_exists_macos("ZzBrewBrowserNonexistent12345.app"));
+        // The MAS probe applies the same guards.
+        assert!(!check_app_is_mas_macos("../Evil.app"));
+        assert!(!check_app_is_mas_macos("ZzBrewBrowserNonexistent12345.app"));
+    }
+
+    #[test]
+    fn cask_app_filenames_extracts_targets_from_artifacts() {
+        // String form, {target} object, and {source}-basename fallback; non-app
+        // artifact stanzas are ignored.
+        let artifacts = serde_json::json!([
+            { "app": ["Plain.app"] },
+            { "app": [ { "target": "Renamed.app" } ] },
+            { "app": [ { "source": "build/output/FromSource.app" } ] },
+            { "zap": [ { "trash": "~/Library/Foo" } ] }
+        ]);
+        let out = cask_app_filenames(&Some(artifacts));
+        assert!(out.contains(&"Plain.app".to_string()));
+        assert!(out.contains(&"Renamed.app".to_string()));
+        assert!(out.contains(&"FromSource.app".to_string()), "source path must reduce to its basename");
+        assert_eq!(out.len(), 3, "non-app stanzas must be ignored");
     }
 }

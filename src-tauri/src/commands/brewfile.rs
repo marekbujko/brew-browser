@@ -31,7 +31,7 @@ pub async fn brewfile_dump(
         });
     }
     let path = state.require_brew_path().await?;
-    let target = brewfile_path(&state.brewfiles_dir, &id);
+    let target = brewfile_path(&state.brewfiles_dir, &id)?;
 
     let target_str = target.to_string_lossy().into_owned();
     let args = vec![
@@ -58,7 +58,7 @@ pub async fn brewfile_install(
     on_event: Channel<BrewStreamEvent>,
     state: State<'_, AppState>,
 ) -> Result<JobResult, BrewError> {
-    let target = brewfile_path(&state.brewfiles_dir, &id);
+    let target = brewfile_path(&state.brewfiles_dir, &id)?;
     if !target.is_file() {
         return Err(BrewError::BrewfileNotFound { id });
     }
@@ -86,7 +86,7 @@ pub async fn brewfile_check(
     id: BrewfileId,
     state: State<'_, AppState>,
 ) -> Result<BrewfileCheckReport, BrewError> {
-    let target = brewfile_path(&state.brewfiles_dir, &id);
+    let target = brewfile_path(&state.brewfiles_dir, &id)?;
     if !target.is_file() {
         return Err(BrewError::BrewfileNotFound { id });
     }
@@ -165,7 +165,7 @@ pub async fn brewfile_read(
     id: BrewfileId,
     state: State<'_, AppState>,
 ) -> Result<Brewfile, BrewError> {
-    let target = brewfile_path(&state.brewfiles_dir, &id);
+    let target = brewfile_path(&state.brewfiles_dir, &id)?;
     if !target.is_file() {
         return Err(BrewError::BrewfileNotFound { id });
     }
@@ -188,7 +188,7 @@ pub async fn brewfile_delete(
     id: BrewfileId,
     state: State<'_, AppState>,
 ) -> Result<(), BrewError> {
-    let target = brewfile_path(&state.brewfiles_dir, &id);
+    let target = brewfile_path(&state.brewfiles_dir, &id)?;
     if !target.is_file() {
         return Err(BrewError::BrewfileNotFound { id });
     }
@@ -206,7 +206,7 @@ pub async fn brewfile_export(
     target_path: String,
     state: State<'_, AppState>,
 ) -> Result<(), BrewError> {
-    let src = brewfile_path(&state.brewfiles_dir, &id);
+    let src = brewfile_path(&state.brewfiles_dir, &id)?;
     if !src.is_file() {
         return Err(BrewError::BrewfileNotFound { id });
     }
@@ -253,7 +253,7 @@ pub async fn brewfile_import(
             message: "label produced an empty id after sanitization".into(),
         });
     }
-    let dst = brewfile_path(&state.brewfiles_dir, &id);
+    let dst = brewfile_path(&state.brewfiles_dir, &id)?;
     tokio::fs::copy(&src, &dst).await.map_err(|e| BrewError::Io {
         message: format!("copy from {}: {}", source_path, e),
     })?;
@@ -510,8 +510,41 @@ fn is_safe_import_source(src: &Path) -> Result<(), BrewError> {
 
 // ---------- helpers ----------
 
-fn brewfile_path(dir: &Path, id: &str) -> PathBuf {
-    dir.join(format!("{}.Brewfile", id))
+/// Validate a Brewfile id before it is ever joined into a filesystem path.
+///
+/// Ids are filename *stems* and on disk only ever come from
+/// [`sanitize_label`], which emits `[A-Za-z0-9_-]` (1–64 chars). The
+/// read/delete/install/check/export commands, however, take `id`
+/// straight from the IPC boundary without routing it through
+/// `sanitize_label`. Enforcing the same allowlist here — at the single
+/// point where an id becomes a path — closes a path-traversal hole:
+/// `Path::join` follows `..` *and* lets an absolute component replace
+/// the base entirely, so an unvalidated id like `../../../../etc/foo` or
+/// `/Users/x/.ssh/id_ed25519` would otherwise escape `brewfiles_dir`.
+///
+/// Allowlist (not blocklist) by design — it rejects `/`, `.`, `..`,
+/// NUL, and every other separator/metacharacter while accepting every
+/// id `sanitize_label` can legitimately produce.
+fn validate_brewfile_id(id: &str) -> Result<(), BrewError> {
+    if id.is_empty() || id.len() > 64 {
+        return Err(BrewError::InvalidArgument {
+            message: "brewfile id must be 1–64 characters".into(),
+        });
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(BrewError::InvalidArgument {
+            message: format!("brewfile id contains an illegal character: {id:?}"),
+        });
+    }
+    Ok(())
+}
+
+fn brewfile_path(dir: &Path, id: &str) -> Result<PathBuf, BrewError> {
+    validate_brewfile_id(id)?;
+    Ok(dir.join(format!("{}.Brewfile", id)))
 }
 
 /// Sanitize a user-provided label into a safe filename stem.
@@ -905,9 +938,49 @@ Vscode extension ms-python.python needs to be installed.
     #[test]
     fn brewfile_path_appends_brewfile_suffix() {
         let dir = std::path::Path::new("/tmp/brew-browser-tests");
-        let p = brewfile_path(dir, "my-snap");
+        let p = brewfile_path(dir, "my-snap").expect("valid id");
         assert!(p.to_string_lossy().ends_with("my-snap.Brewfile"));
         assert!(p.starts_with(dir));
+    }
+
+    #[test]
+    fn brewfile_id_accepts_sanitize_label_output() {
+        // Every id sanitize_label can produce must survive validation,
+        // otherwise we'd reject snapshots we created ourselves.
+        for ok in &["my-snap", "pre_upgrade", "v1_2_3", "A1", "snapshot_2025-01-01_120000"] {
+            assert!(validate_brewfile_id(ok).is_ok(), "{ok:?} should be accepted");
+            assert!(brewfile_path(Path::new("/tmp/bb"), ok).is_ok());
+        }
+    }
+
+    #[test]
+    fn brewfile_id_rejects_path_traversal() {
+        // The core of the fix: an id reaching the read/delete/install/
+        // check/export commands from IPC must never escape brewfiles_dir.
+        let dir = Path::new("/Users/x/Library/Application Support/brew-browser/brewfiles");
+        for evil in &[
+            "../../../../etc/cron.d/evil",
+            "/etc/passwd",
+            "/Users/x/.ssh/authorized_keys",
+            "..",
+            "foo/bar",
+            "foo/../../bar",
+            "a.b",            // '.' is not in the allowlist
+            "with space",
+            "semi;colon",
+            "nul\0byte",
+            "",               // empty
+            &"x".repeat(65),  // over length cap
+        ] {
+            assert!(
+                matches!(validate_brewfile_id(evil), Err(BrewError::InvalidArgument { .. })),
+                "{evil:?} should be rejected by validate_brewfile_id"
+            );
+            assert!(
+                matches!(brewfile_path(dir, evil), Err(BrewError::InvalidArgument { .. })),
+                "brewfile_path must refuse to build a path for {evil:?}"
+            );
+        }
     }
 
     // ---------- is_safe_export_target (H2) ----------

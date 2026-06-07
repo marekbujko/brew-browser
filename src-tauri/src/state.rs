@@ -333,6 +333,24 @@ impl AppState {
         }
     }
 
+    /// Composed gate for the opt-in live enrichment surface (fresh categories +
+    /// descriptions fetched from `brew-browser.zerologic.com/enrichment/*`).
+    /// Mirrors [`Self::require_enhanced_trending`]: master paranoid switch
+    /// first, then the per-feature `live_enrichment_enabled` toggle. Used by
+    /// the `enrichment_live_*` commands before any network call.
+    ///
+    /// Fail-closed on `Corrupt` is handled by the inner `require_network` call.
+    pub async fn require_live_enrichment(&self) -> Result<(), BrewError> {
+        self.require_network("live_enrichment").await?;
+        let guard = self.settings.read().await;
+        match &*guard {
+            SettingsLoadState::Loaded(s) if s.live_enrichment_enabled => Ok(()),
+            _ => Err(BrewError::FeatureDisabled {
+                feature: "live_enrichment".to_string(),
+            }),
+        }
+    }
+
     /// v0.5.0 — composed gate for the vulnerability-scanning surface
     /// (`brew vulns` subprocess + OSV roundtrip + optional GHSA enrich).
     /// Composes the master paranoid switch with the per-feature

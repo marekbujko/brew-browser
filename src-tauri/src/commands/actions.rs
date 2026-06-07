@@ -20,6 +20,7 @@ use crate::types::{BrewStreamEvent, JobResult, PackageKind};
 pub async fn brew_install(
     name: String,
     kind: PackageKind,
+    force: bool,
     on_event: Channel<BrewStreamEvent>,
     state: State<'_, AppState>,
 ) -> Result<JobResult, BrewError> {
@@ -30,12 +31,20 @@ pub async fn brew_install(
         PackageKind::Formula => "--formula",
         PackageKind::Cask => "--cask",
     };
-    let args = vec![
+    let mut args = vec![
         "install".to_string(),
         kind_flag.to_string(),
         name.clone(),
     ];
-    let display = format!("brew install {} {}", kind_flag, name);
+    if force {
+        args.push("--force".to_string());
+    }
+    let display = format!(
+        "brew install {} {}{}",
+        kind_flag,
+        name,
+        if force { " --force" } else { "" }
+    );
     let jobs = state.jobs.clone();
     let lock = state.brew_write_lock.clone();
 

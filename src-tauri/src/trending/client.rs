@@ -70,7 +70,7 @@ struct RawAnalyticsItem {
 pub async fn fetch(
     window: TrendingWindow,
     installed: &HashSet<String>,
-) -> Result<TrendingReport, BrewError> {
+) -> Result<(TrendingReport, HashMap<String, u64>), BrewError> {
     let client = build_client()?;
 
     // Fire both fetches concurrently. tokio::join! waits for both;
@@ -99,15 +99,30 @@ pub async fn fetch(
         }
     };
 
+    // Full, uncapped name→install_count for this window — feeds the cross-
+    // window velocity computation so rising packages (top-100 in 30d but
+    // ranked >100 over 365d) still get a velocity, matching the native build.
+    // The displayed report below stays capped to the top 100 by installs.
+    let full_counts: HashMap<String, u64> = install
+        .items
+        .iter()
+        .filter(|i| !i.formula.is_empty())
+        .map(|i| (i.formula.clone(), parse_count(&i.count)))
+        .collect();
+
+    let total_count = install.total_count;
     let entries = merge_entries(install.items, ior_map, installed);
 
-    Ok(TrendingReport {
-        window,
-        fetched_at: Utc::now().to_rfc3339(),
-        cache_age_seconds: 0,
-        total_count: install.total_count,
-        entries,
-    })
+    Ok((
+        TrendingReport {
+            window,
+            fetched_at: Utc::now().to_rfc3339(),
+            cache_age_seconds: 0,
+            total_count,
+            entries,
+        },
+        full_counts,
+    ))
 }
 
 /// v0.4.0 — pure merge of the two endpoint payloads into the final

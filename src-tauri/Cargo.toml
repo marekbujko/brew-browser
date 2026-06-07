@@ -85,6 +85,10 @@ url = "2"
 # call its macOS APIs.
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.6"
+# Direct use of the Security framework for a single batched Keychain read
+# (one SecItemCopyMatching for all GitHub items → one auth prompt instead of
+# three). Pinned to "2" to unify with the version keyring already compiles.
+security-framework = "2"
 
 [dev-dependencies]
 # Reserved for future integration tests that need a sandbox dir

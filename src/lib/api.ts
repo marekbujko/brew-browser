@@ -33,6 +33,7 @@ import type {
   DiskUsageReport,
   EnrichmentData,
   EnrichmentEntry,
+  LiveEnrichmentVersion,
   Formula,
   GithubStatus,
   JobResult,
@@ -128,11 +129,13 @@ function makeChannel(onEvent: (evt: BrewStreamEvent) => void): Channel<BrewStrea
 export function brewInstall(
   name: string,
   kind: PackageKind,
+  force = false,
   onEvent: (evt: BrewStreamEvent) => void,
 ): Promise<JobResult> {
   return invoke<JobResult>("brew_install", {
     name,
     kind,
+    force,
     onEvent: makeChannel(onEvent),
   });
 }
@@ -405,6 +408,28 @@ export function enrichmentData(): Promise<EnrichmentData> {
  */
 export function enrichmentLookup(name: string): Promise<EnrichmentEntry | null> {
   return invoke<EnrichmentEntry | null>("enrichment_lookup", { name });
+}
+
+// ============================================================
+// Live enrichment (opt-in) — fresh categories/descriptions from
+// brew-browser.zerologic.com/enrichment/*. Each is gated server-side by
+// require_live_enrichment (paranoid + the liveEnrichmentEnabled toggle) and
+// soft-fails; callers overlay results on the bundled baseline.
+// ============================================================
+
+/** Freshness probe: `{version, generatedAt, categoriesVersion}`. */
+export function enrichmentLiveVersion(): Promise<LiveEnrichmentVersion> {
+  return invoke<LiveEnrichmentVersion>("enrichment_live_version");
+}
+
+/** Full live categories file — pulled only when its version is newer. */
+export function enrichmentLiveCategories(): Promise<CategoriesData> {
+  return invoke<CategoriesData>("enrichment_live_categories");
+}
+
+/** Per-token live enrichment, fetched on demand for a shown package. */
+export function enrichmentLiveEntry(name: string): Promise<EnrichmentEntry> {
+  return invoke<EnrichmentEntry>("enrichment_live_entry", { name });
 }
 
 // ============================================================

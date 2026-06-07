@@ -28,6 +28,11 @@
 > components only, no overrides.**
 >
 > See `decisions.md` (2026-06-06 deploy-prep entry), `tasks/2026-06/09`+`10`.
+>
+> **Tauri side (now on `main`, merged in):** tauri-parity (#37), live-enrichment
+> pipeline + app (#41/#43), pipeline-rsync (#42), trending tap-tokens (#44), cask
+> manual-install detection (#45), brewfile path-traversal (#46). This branch was
+> synced with `origin/main` on 2026-06-06 ahead of the native→main PR.
 
 ---
 

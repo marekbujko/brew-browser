@@ -78,7 +78,7 @@ native Swift/SwiftUI/Liquid Glass port lives in `native/` as a Swift Package, wi
 its own contributor-facing `native/README.md` (build loop + source map). It's a
 port of the shipped Tauri interface, not a separate product. Design/decision
 context for it lives in the memory bank as usual: `decisions.md` (2026-05-30 ADR),
-`techContext.md` ("Native rebuild" section), and `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`.
+`techContext.md` ("Native rebuild" section), and `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`.
 
 ## Live vs historical entries within memory-bank
 

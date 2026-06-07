@@ -49,3 +49,40 @@ pub async fn enrichment_lookup(
     let data = enrichment_data(state).await?;
     Ok(data.entries.get(&name).cloned())
 }
+
+// ---------- Live enrichment (opt-in) ----------
+//
+// Fresh categories/descriptions from brew-browser.zerologic.com/enrichment/*.
+// Each command is gated by `require_live_enrichment` (paranoid + per-feature
+// toggle) and soft-fails — the frontend overlays the result on the bundled
+// baseline and ignores errors (keeps bundled). Mirrors `trending_history_*`.
+
+/// Freshness probe — the frontend polls this on catalog refresh to decide
+/// whether to pull a newer categories file or invalidate per-token caches.
+#[tauri::command]
+pub async fn enrichment_live_version(
+    state: State<'_, AppState>,
+) -> Result<crate::enrichment::live::LiveEnrichmentVersion, BrewError> {
+    state.require_live_enrichment().await?;
+    crate::enrichment::live::fetch_version().await
+}
+
+/// Full live categories file. Frontend pulls it only when the probe's
+/// `categoriesVersion` is newer than the version it already holds.
+#[tauri::command]
+pub async fn enrichment_live_categories(
+    state: State<'_, AppState>,
+) -> Result<crate::commands::categories::CategoriesData, BrewError> {
+    state.require_live_enrichment().await?;
+    crate::enrichment::live::fetch_categories().await
+}
+
+/// Per-token live enrichment, fetched on demand for packages the app shows.
+#[tauri::command]
+pub async fn enrichment_live_entry(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<EnrichmentEntry, BrewError> {
+    state.require_live_enrichment().await?;
+    crate::enrichment::live::fetch_entry(&name).await
+}

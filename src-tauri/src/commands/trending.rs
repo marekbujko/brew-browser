@@ -140,13 +140,13 @@ async fn ensure_all_windows_cached(
     // JoinSet (vs. `futures::future::join_all`) keeps us on the
     // tokio-only dependency footprint and lets each task be cancelled
     // independently if a future need arose.
-    let mut set: tokio::task::JoinSet<(TrendingWindow, Result<TrendingReport, BrewError>)> =
-        tokio::task::JoinSet::new();
+    type WindowFetch = Result<(TrendingReport, HashMap<String, u64>), BrewError>;
+    let mut set: tokio::task::JoinSet<(TrendingWindow, WindowFetch)> = tokio::task::JoinSet::new();
     for w in stale {
         let installed_owned: HashSet<String> = installed.clone();
         set.spawn(async move { (w, client::fetch(w, &installed_owned).await) });
     }
-    let mut results: Vec<(TrendingWindow, Result<TrendingReport, BrewError>)> = Vec::new();
+    let mut results: Vec<(TrendingWindow, WindowFetch)> = Vec::new();
     while let Some(joined) = set.join_next().await {
         match joined {
             Ok(pair) => results.push(pair),
@@ -160,11 +160,12 @@ async fn ensure_all_windows_cached(
     let mut cache = state.trending_cache.lock().await;
     for (w, res) in results {
         match res {
-            Ok(report) => cache.put(
+            Ok((report, full_counts)) => cache.put(
                 w,
                 CachedTrending {
                     fetched_at: Instant::now(),
                     report,
+                    full_counts,
                 },
             ),
             Err(e) => {
@@ -186,16 +187,14 @@ async fn ensure_all_windows_cached(
 async fn build_velocity_map(state: &AppState) -> HashMap<String, Option<f64>> {
     let cache = state.trending_cache.lock().await;
 
+    // Use each window's FULL (uncapped) install-count map, not the top-100
+    // display entries — otherwise a package that's top-100 in 30d but not over
+    // 365d has no c365 here and silently loses its velocity (dropping rising
+    // packages from the leaderboard). Mirrors native's full-map computation.
     let extract = |w: TrendingWindow| -> HashMap<String, u64> {
         cache
             .get(w)
-            .map(|c| {
-                c.report
-                    .entries
-                    .iter()
-                    .map(|e| (e.name.clone(), e.install_count))
-                    .collect()
-            })
+            .map(|c| c.full_counts.clone())
             .unwrap_or_default()
     };
 
@@ -412,6 +411,7 @@ mod tests {
                     total_count: 0,
                     entries: Vec::new(),
                 },
+                full_counts: Default::default(),
             },
         );
 

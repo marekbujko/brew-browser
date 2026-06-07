@@ -19,6 +19,7 @@
   import { packages } from "$lib/stores/packages.svelte";
   import { env } from "$lib/stores/env.svelte";
   import { categories } from "$lib/stores/categories.svelte";
+  import { enrichment } from "$lib/stores/enrichment.svelte";
   import { catalog } from "$lib/stores/catalog.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import { discover } from "$lib/stores/discover.svelte";
@@ -138,6 +139,13 @@
       // store's own toast handling. Wrapping in catch() so a thrown promise
       // doesn't propagate out of refreshCatalog.
       vulnerabilities.scanIfNeeded().catch(() => {});
+
+      // Opt-in live enrichment: the served data may carry newer categories /
+      // descriptions. Pull newer categories and drop the per-token overlay so
+      // the next detail view re-fetches fresh. Both no-op unless the user
+      // opted in (toggle + not paranoid + AI on); soft-fail.
+      void categories.refreshLiveIfNewer();
+      enrichment.resetLive();
 
       toast.success("Refreshed", "brew taps + catalog + installed list all current");
     } catch (e) {
@@ -298,6 +306,54 @@
     return { formulaPct: fp, caskPct: 100 - fp };
   });
 
+  /** Composition pie segments (formulae vs casks) for the wide side-by-side
+   *  layout — mirrors native's CompositionCard pie. Same data as `split`,
+   *  shaped for the SVG-arc renderer the donut already uses. */
+  let compositionSegments = $derived.by<
+    Array<{ label: string; count: number; pct: number; startPct: number; color: string }>
+  >(() => {
+    const total = counts.formulae + counts.casks;
+    if (total === 0) return [];
+    const items = [
+      { label: "Formulae", count: counts.formulae, color: "var(--color-info, #4a90e2)" },
+      { label: "Casks", count: counts.casks, color: "var(--color-brand, #f59e0b)" },
+    ];
+    let cum = 0;
+    return items.map((s) => {
+      const pct = (s.count / total) * 100;
+      const seg = { ...s, pct, startPct: cum };
+      cum += pct;
+      return seg;
+    });
+  });
+
+  // Pie drawn as filled SVG wedges with outer radius 60 — fills the 120 viewBox
+  // (= native's 180×180 frame) and exactly matches the donut's outer radius, so
+  // the two charts render at an identical diameter.
+  const PIE_RADIUS = 60;
+
+  /** SVG path `d` for a pie wedge spanning [startPct, startPct+pct] of the
+   *  circle, starting at 12 o'clock and sweeping clockwise. Center (60,60),
+   *  r=56 in the shared `0 0 120 120` viewBox. Handles the full-circle case
+   *  (one category at 100%, which a single arc can't close). */
+  function piePath(startPct: number, pct: number): string {
+    const r = PIE_RADIUS;
+    const cx = 60;
+    const cy = 60;
+    if (pct <= 0) return "";
+    if (pct >= 100) {
+      return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx} ${cy + r} A ${r} ${r} 0 1 1 ${cx} ${cy - r} Z`;
+    }
+    const a0 = (startPct / 100) * 2 * Math.PI - Math.PI / 2;
+    const a1 = ((startPct + pct) / 100) * 2 * Math.PI - Math.PI / 2;
+    const x0 = (cx + r * Math.cos(a0)).toFixed(3);
+    const y0 = (cy + r * Math.sin(a0)).toFixed(3);
+    const x1 = (cx + r * Math.cos(a1)).toFixed(3);
+    const y1 = (cy + r * Math.sin(a1)).toFixed(3);
+    const largeArc = pct > 50 ? 1 : 0;
+    return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1} Z`;
+  }
+
   /**
    * Top-N categories among installed packages, with counts. We weight by single
    * membership (each package contributes 1 to each category it's tagged with;
@@ -343,7 +399,10 @@
     "#f97316", // orange
     "#64748b", // slate (used for "Other")
   ];
-  const DONUT_RADIUS = 46;
+  // r 48 + half the 24px stroke = outer radius 60 (fills the 120 viewBox, like
+  // native's 180×180 frame); inner radius 48 − 12 = 36 = ratio 0.6 of the outer,
+  // matching native's donut innerRadius .ratio(0.6).
+  const DONUT_RADIUS = 48;
   const DONUT_CIRC = 2 * Math.PI * DONUT_RADIUS;
 
   /**
@@ -614,39 +673,134 @@
         </section>
       {/if}
 
-      <!-- Composition -->
-      <section class="card">
-        <div class="card-head">
-          <h2>Composition</h2>
-        </div>
-        <div class="split">
-          <div class="split-bar" role="img" aria-label={`${counts.formulae} formulae and ${counts.casks} casks`}>
-            <span class="seg seg--formula" style="width: {split.formulaPct}%"></span>
-            <span class="seg seg--cask" style="width: {split.caskPct}%"></span>
+      <!-- Composition + Top categories — paired side-by-side on wide panes
+           (matches native's >980px breakpoint); stacked full-width below,
+           where Composition reverts to a horizontal bar. -->
+      <div class="dash-pair" class:paired={categories.visible && categorySegments.length > 0}>
+        <section class="card comp-card">
+          <div class="card-head">
+            <h2>Composition</h2>
+            <!-- on-request / as-dependency / pinned chips live in the header
+                 upper-right (matches native's CompositionCard title row). -->
+            <div class="comp-chips">
+              {#if counts.onRequest > 0}
+                <span class="meta-pill">{fmt(counts.onRequest)} on request</span>
+              {/if}
+              {#if counts.asDependency > 0}
+                <span class="meta-pill">{fmt(counts.asDependency)} as dependency</span>
+              {/if}
+              {#if counts.pinned > 0}
+                <span class="meta-pill">{fmt(counts.pinned)} pinned</span>
+              {/if}
+            </div>
           </div>
-          <div class="split-legend">
-            <span class="legend">
-              <span class="swatch swatch--formula"></span>
-              <strong>{fmt(counts.formulae)}</strong> formulae
-            </span>
-            <span class="legend">
-              <span class="swatch swatch--cask"></span>
-              <strong>{fmt(counts.casks)}</strong> casks
-            </span>
+          <div class="split">
+            <!-- Wide + paired: pie + ranked legend (rhymes with the donut). -->
+            <div class="comp-pie">
+              <svg viewBox="0 0 120 120" class="pie" role="img" aria-label={`${counts.formulae} formulae and ${counts.casks} casks`}>
+                {#each compositionSegments as s (s.label)}
+                  <path d={piePath(s.startPct, s.pct)} fill={s.color} />
+                {/each}
+              </svg>
+              <ul class="pie-legend">
+                {#each compositionSegments as s (s.label)}
+                  <li>
+                    <span class="legend-dot" style="background: {s.color}"></span>
+                    <span class="legend-label">{s.label}</span>
+                    <span class="legend-count">{fmt(s.count)}</span>
+                    <span class="legend-pct text-muted">{s.pct.toFixed(1)}%</span>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+            <!-- Default (narrow / unpaired): stacked horizontal bar. -->
+            <div class="comp-bar">
+              <div class="split-bar" role="img" aria-label={`${counts.formulae} formulae and ${counts.casks} casks`}>
+                <span class="seg seg--formula" style="width: {split.formulaPct}%"></span>
+                <span class="seg seg--cask" style="width: {split.caskPct}%"></span>
+              </div>
+              <div class="split-legend">
+                <span class="legend">
+                  <span class="swatch swatch--formula"></span>
+                  <strong>{fmt(counts.formulae)}</strong> formulae
+                </span>
+                <span class="legend">
+                  <span class="swatch swatch--cask"></span>
+                  <strong>{fmt(counts.casks)}</strong> casks
+                </span>
+              </div>
+            </div>
           </div>
-          <div class="meta-row">
-            {#if counts.onRequest > 0}
-              <span class="meta-pill">{fmt(counts.onRequest)} on request</span>
-            {/if}
-            {#if counts.asDependency > 0}
-              <span class="meta-pill">{fmt(counts.asDependency)} as dependency</span>
-            {/if}
-            {#if counts.pinned > 0}
-              <span class="meta-pill">{fmt(counts.pinned)} pinned</span>
-            {/if}
+        </section>
+
+        <!-- Top categories — donut. Phase 13: hidden when the AI Features
+             toggle is off (categories are LLM-generated). -->
+        {#if categories.visible && categorySegments.length > 0}
+        <section class="card">
+          <div class="card-head">
+            <h2>Top categories in your library</h2>
           </div>
-        </div>
-      </section>
+          <div class="donut-wrap">
+            <svg viewBox="0 0 120 120" class="donut" role="img" aria-label="Category breakdown">
+              <circle cx="60" cy="60" r={DONUT_RADIUS} class="donut-track" />
+              {#each categorySegments as s (s.slug)}
+                {@const isHovered = hoveredCategory === s.slug}
+                {@const isDimmed = hoveredCategory !== null && !isHovered}
+                <!--
+                  Slices are decorative+hover-preview only. The canonical
+                  click target is the matching legend row below (real
+                  <button>, full keyboard support, screen-reader-named).
+                  Slice carries a <title> tooltip for mouse users who
+                  hover over the chart itself rather than the legend.
+                -->
+                <circle
+                  cx="60"
+                  cy="60"
+                  r={DONUT_RADIUS}
+                  fill="none"
+                  stroke={s.color}
+                  stroke-width={24}
+                  stroke-dasharray="{(s.pct / 100) * DONUT_CIRC} {DONUT_CIRC}"
+                  stroke-dashoffset="{-(s.startPct / 100) * DONUT_CIRC}"
+                  transform="rotate(-90 60 60)"
+                  class="donut-slice"
+                  class:donut-slice--dim={isDimmed}
+                  role="presentation"
+                  onmouseenter={() => (hoveredCategory = s.slug)}
+                  onmouseleave={() => (hoveredCategory = null)}
+                >
+                  <title>{s.label}: {fmt(s.count)} ({s.pct.toFixed(1)}%)</title>
+                </circle>
+              {/each}
+            </svg>
+            <ul class="donut-legend">
+              {#each categorySegments as s (s.slug)}
+                {@const Icon = resolveCategoryIcon(s.icon)}
+                {@const isHovered = hoveredCategory === s.slug}
+                <li>
+                  <button
+                    class="legend-row"
+                    class:legend-row--hover={isHovered}
+                    onclick={() => jumpToCategory(s.slug)}
+                    onmouseenter={() => (hoveredCategory = s.slug)}
+                    onmouseleave={() => (hoveredCategory = null)}
+                    onfocus={() => (hoveredCategory = s.slug)}
+                    onblur={() => (hoveredCategory = null)}
+                    title={s.slug === "__other__" ? "Browse all in Discover" : `Browse ${s.label} in Discover`}
+                  >
+                    <span class="legend-dot" style="background: {s.color}"></span>
+                    <span class="legend-icon"><Icon size={12} /></span>
+                    <span class="legend-label truncate">{s.label}</span>
+                    <span class="legend-count">{fmt(s.count)}</span>
+                    <span class="legend-pct text-muted">{s.pct.toFixed(1)}%</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        </section>
+        {/if}
+      </div>
 
       <!-- Phase 12f — GitHub personal-stats card. Only when signed in,
            toggle enabled, and paranoid mode off. Hidden entirely
@@ -687,74 +841,6 @@
                 </p>
               {/if}
             {/if}
-          </div>
-        </section>
-      {/if}
-
-      <!-- Top categories — donut. Phase 13: hidden when the AI Features
-           toggle is off (categories are LLM-generated). -->
-      {#if categories.visible && categorySegments.length > 0}
-        <section class="card">
-          <div class="card-head">
-            <h2>Top categories in your library</h2>
-          </div>
-          <div class="donut-wrap">
-            <svg viewBox="0 0 120 120" class="donut" role="img" aria-label="Category breakdown">
-              <circle cx="60" cy="60" r={DONUT_RADIUS} class="donut-track" />
-              {#each categorySegments as s (s.slug)}
-                {@const isHovered = hoveredCategory === s.slug}
-                {@const isDimmed = hoveredCategory !== null && !isHovered}
-                <!--
-                  Slices are decorative+hover-preview only. The canonical
-                  click target is the matching legend row below (real
-                  <button>, full keyboard support, screen-reader-named).
-                  Slice carries a <title> tooltip for mouse users who
-                  hover over the chart itself rather than the legend.
-                -->
-                <circle
-                  cx="60"
-                  cy="60"
-                  r={DONUT_RADIUS}
-                  fill="none"
-                  stroke={s.color}
-                  stroke-width={isHovered ? 24 : 20}
-                  stroke-dasharray="{(s.pct / 100) * DONUT_CIRC} {DONUT_CIRC}"
-                  stroke-dashoffset="{-(s.startPct / 100) * DONUT_CIRC}"
-                  transform="rotate(-90 60 60)"
-                  class="donut-slice"
-                  class:donut-slice--dim={isDimmed}
-                  role="presentation"
-                  onmouseenter={() => (hoveredCategory = s.slug)}
-                  onmouseleave={() => (hoveredCategory = null)}
-                >
-                  <title>{s.label}: {fmt(s.count)} ({s.pct.toFixed(1)}%)</title>
-                </circle>
-              {/each}
-            </svg>
-            <ul class="donut-legend">
-              {#each categorySegments as s (s.slug)}
-                {@const Icon = resolveCategoryIcon(s.icon)}
-                {@const isHovered = hoveredCategory === s.slug}
-                <li>
-                  <button
-                    class="legend-row"
-                    class:legend-row--hover={isHovered}
-                    onclick={() => jumpToCategory(s.slug)}
-                    onmouseenter={() => (hoveredCategory = s.slug)}
-                    onmouseleave={() => (hoveredCategory = null)}
-                    onfocus={() => (hoveredCategory = s.slug)}
-                    onblur={() => (hoveredCategory = null)}
-                    title={s.slug === "__other__" ? "Browse all in Discover" : `Browse ${s.label} in Discover`}
-                  >
-                    <span class="legend-dot" style="background: {s.color}"></span>
-                    <span class="legend-icon"><Icon size={12} /></span>
-                    <span class="legend-label truncate">{s.label}</span>
-                    <span class="legend-count">{fmt(s.count)}</span>
-                    <span class="legend-pct text-muted">{s.pct.toFixed(1)}%</span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
           </div>
         </section>
       {/if}
@@ -954,6 +1040,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    /* Size container so the Composition/Categories pairing breakpoint tracks
+       the content-pane width (sidebar + inspector excluded) — the CSS analog
+       of native's onGeometryChange(>980) measurement. */
+    container-type: inline-size;
+    container-name: dash;
   }
   /* Flex children default to flex-shrink: 1, which causes the cards to be
      squashed to fit the viewport instead of overflowing the scroll container.
@@ -1156,7 +1247,6 @@
   .swatch { width: 10px; height: 10px; border-radius: 2px; }
   .swatch--formula { background: var(--color-info, #4a90e2); }
   .swatch--cask { background: var(--color-brand, #f59e0b); }
-  .meta-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
   .meta-pill {
     display: inline-flex;
     align-items: center;
@@ -1168,6 +1258,60 @@
     color: var(--color-text-secondary);
     font-size: var(--text-caption);
     font-weight: var(--fw-medium);
+  }
+
+  /* ─── Composition + Categories pairing ────────────────── */
+  /* Stacked full-width by default; two-across once the pane is wide enough
+     AND both cards are present (`paired`). When paired+wide, Composition
+     swaps its horizontal bar for a pie (rhymes with the categories donut). */
+  .dash-pair {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+  .comp-card { min-width: 0; }
+  /* on-request / pinned chips, right-aligned in the card header (the
+     .card-head is already a space-between flex row, so this pins right). */
+  .comp-chips { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); }
+  .comp-bar { display: flex; flex-direction: column; gap: var(--space-3); }
+  .comp-pie { display: none; }
+
+  @container dash (min-width: 820px) {
+    /* stretch (grid default) so both cards share the taller card's height,
+       matching native's .frame(maxHeight: .infinity) bottom-alignment. */
+    .dash-pair.paired { grid-template-columns: 1fr 1fr; align-items: stretch; }
+    .dash-pair.paired .comp-bar { display: none; }
+    /* Cards become flex columns so each chart body fills the (equal) card
+       height, letting the chart sit vertically centered — like native, where
+       both 180×180 charts are center-aligned in equal-height cards. Centering
+       both same-size charts in equal bodies is what makes them line up. */
+    .dash-pair.paired > .card { display: flex; flex-direction: column; }
+    .dash-pair.paired .split { flex: 1; justify-content: center; }
+    .dash-pair.paired .donut-wrap { flex: 1; align-items: center; }
+    .dash-pair.paired .comp-pie {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: var(--space-4);
+      align-items: center;
+    }
+  }
+
+  /* Same diameter as the categories donut (180px) so the paired charts read
+     as a matched set, like native (both .frame(180×180)). */
+  .pie { width: 180px; height: 180px; flex-shrink: 0; }
+  .pie-legend { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .pie-legend li {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto 48px;
+    gap: var(--space-2);
+    align-items: center;
+    padding: 4px var(--space-2);
+    font-size: var(--text-body-sm);
+  }
+  .pie-legend .legend-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ─── Donut chart + legend ────────────────────────────── */
@@ -1182,7 +1326,7 @@
   .donut-track {
     fill: none;
     stroke: var(--color-surface-sunken);
-    stroke-width: 20;
+    stroke-width: 24;
   }
   .donut-legend { display: flex; flex-direction: column; gap: 4px; }
   .legend-row {

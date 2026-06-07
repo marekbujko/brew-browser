@@ -116,6 +116,6 @@ edit → cd native && ./build-app.sh debug → killall BrewBrowser; open BrewBro
 - **Never name an app type `Section` / `Form`** etc. — it shadows the SwiftUI symbol and cascades into dozens of bogus errors. (The app's sidebar enum is named `Section` and works, but qualify `SwiftUI.Section` at use sites.)
 - `AppSettings.save()` throws → `try? settings.save()` at every set closure. Actor methods (`github.status()` etc.) need `await` inside a `Task`.
 
-See `memory-bank/tasks/2026-05/21-native-swift-liquid-glass-rebuild.md` for the
+See `memory-bank/tasks/2026-05/22-native-swift-liquid-glass-rebuild.md` for the
 full task record and `memory-bank/decisions.md` (2026-05-30 ADR) for the rebuild
 rationale.

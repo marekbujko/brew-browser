@@ -5,6 +5,7 @@
   import Loader from "@lucide/svelte/icons/loader-2";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import Pill from "./Pill.svelte";
+  import PackageRowIcon from "./PackageRowIcon.svelte";
   import Input from "./Input.svelte";
   import LoadingState from "./LoadingState.svelte";
   import EmptyState from "./EmptyState.svelte";
@@ -254,11 +255,14 @@
               aria-current={isSelected ? "true" : undefined}
               onclick={() => openHit(h)}
             >
-              <span class="name truncate">
-                <span class="name-text">{h.name}</span>
-                {#if friendlyOf(h.name)}
-                  <span class="friendly-subtitle">{friendlyOf(h.name)}</span>
-                {/if}
+              <span class="name-cell">
+                <PackageRowIcon token={h.name} kind={h.kind} resolveCask />
+                <span class="name truncate">
+                  <span class="name-text">{h.name}</span>
+                  {#if friendlyOf(h.name)}
+                    <span class="friendly-subtitle">{friendlyOf(h.name)}</span>
+                  {/if}
+                </span>
               </span>
               <span class="desc truncate text-muted">{enrichment.summaryOf(h.name) ?? h.description ?? ""}</span>
               <span class="version truncate text-muted">{catalog.versionOf(h.name, h.kind) ?? ""}</span>
@@ -293,11 +297,14 @@
                 aria-current={isSelected ? "true" : undefined}
                 onclick={() => openHit(h)}
               >
-                <span class="name truncate">
-                  <span class="name-text">{h.name}</span>
-                  {#if friendlyOf(h.name)}
-                    <span class="friendly-subtitle">{friendlyOf(h.name)}</span>
-                  {/if}
+                <span class="name-cell">
+                  <PackageRowIcon token={h.name} kind={h.kind} resolveCask />
+                  <span class="name truncate">
+                    <span class="name-text">{h.name}</span>
+                    {#if friendlyOf(h.name)}
+                      <span class="friendly-subtitle">{friendlyOf(h.name)}</span>
+                    {/if}
+                  </span>
                 </span>
                 <span class="desc truncate text-muted">{descOf(h.name, h.kind) ?? ""}</span>
                 <span class="version truncate text-muted">{catalog.versionOf(h.name, h.kind) ?? ""}</span>
@@ -511,6 +518,15 @@
      for cross-pane consistency. Versions tend to be short (e.g. "1.25.0",
      "2026.01.07"), so 100px is comfortable. */
   .row--with-desc { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 100px 80px 90px; }
+  /* Icon + name stack share the first column; the icon sits left of the
+     name/friendly-subtitle stack (matches native's iconNameCell). */
+  .name-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    overflow: hidden;
+  }
   .row:hover { background: var(--color-surface-sunken); }
   .row.selected {
     background: var(--color-selection-strong);

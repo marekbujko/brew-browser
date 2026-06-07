@@ -19,6 +19,10 @@ pub struct TrendingCache {
 pub struct CachedTrending {
     pub fetched_at: Instant,
     pub report: TrendingReport,
+    /// Full, uncapped name→install_count for this window (all formulae, not
+    /// just the top-100 display set). Powers cross-window velocity so rising
+    /// packages aren't dropped. See `commands::trending::build_velocity_map`.
+    pub full_counts: std::collections::HashMap<String, u64>,
 }
 
 impl TrendingCache {
@@ -73,6 +77,7 @@ mod tests {
         CachedTrending {
             fetched_at: Instant::now() - age,
             report: make_report(window),
+            full_counts: std::collections::HashMap::new(),
         }
     }
 

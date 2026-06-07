@@ -23,6 +23,7 @@ import {
   catalogSummary,
 } from "$lib/api";
 import { settings } from "$lib/stores/settings.svelte";
+import { bareToken } from "$lib/util/token";
 import {
   brewErrorMessage,
   isBrewError,
@@ -184,7 +185,7 @@ class CatalogStore {
    */
   descOf(name: string, kind: PackageKind): string | null {
     const map = kind === "formula" ? this.descByFormula : this.descByCask;
-    return map?.get(name) ?? null;
+    return map?.get(name) ?? map?.get(bareToken(name)) ?? null;
   }
 
   /**
@@ -199,7 +200,7 @@ class CatalogStore {
    */
   versionOf(name: string, kind: PackageKind): string | null {
     const map = kind === "formula" ? this.versionByFormula : this.versionByCask;
-    return map?.get(name) ?? null;
+    return map?.get(name) ?? map?.get(bareToken(name)) ?? null;
   }
 
   /** Convenience wrapper around `catalog_lookup_formula`. Returns `null`

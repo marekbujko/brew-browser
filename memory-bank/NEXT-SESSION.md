@@ -36,7 +36,7 @@ so no `xcodebuild`; `swift build` links Liquid Glass fine. **Constraint:** stock
 Apple components only, no overrides.
 
 **Docs:** `native/README.md` (build + source map), `decisions.md` (2026-05-30 ADR),
-`techContext.md` ("Native rebuild" section), `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`,
+`techContext.md` ("Native rebuild" section), `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`,
 `progress.md` (2026-05-31), and cross-session memory
 `~/.claude/projects/-Users-michael-Software-brew-browser/memory/project-native-swift-rebuild.md`.
 

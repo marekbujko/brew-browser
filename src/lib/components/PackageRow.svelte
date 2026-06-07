@@ -1,8 +1,7 @@
 <script lang="ts">
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
-  import PackageIcon from "@lucide/svelte/icons/package";
   import Pill from "./Pill.svelte";
-  import { iconCache } from "$lib/stores/iconCache.svelte";
+  import PackageRowIcon from "./PackageRowIcon.svelte";
   import { enrichment } from "$lib/stores/enrichment.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { vulnerabilities } from "$lib/stores/vulnerabilities.svelte";
@@ -80,40 +79,6 @@
     return enrichment.summaryOf(pkg.name) ?? pkg.description ?? null;
   }
 
-  // Per-row icon state. We keep this row-local rather than reading
-  // iconCache.cache directly so the row can reflect "loading" before the
-  // first resolve, and we don't recompute the Map lookup on every keystroke
-  // in the Library filter.
-  let iconDataUrl = $state<string | null>(null);
-  let iconLoaded = $state(false);
-
-  // Lazy-fetch on mount (and re-fetch if the row's pkg identity changes —
-  // happens when the Library list re-keys on filter swap).
-  //
-  // Phase 8: gating now lives inside iconCache via pkg.iconSource — formulae
-  // resolve to null immediately (iconSource.kind === "none") without an IPC
-  // hop, so we can drive both kinds through the same path and let the store
-  // route to cask_icon vs cask_icon_from_homepage. We still peek the cache
-  // first to avoid a microtask on the hot path.
-  $effect(() => {
-    const token = pkg.name;
-    // Synchronous peek first — avoids a microtask if cached.
-    const cached = iconCache.peek(token);
-    if (cached !== undefined) {
-      iconDataUrl = cached;
-      iconLoaded = true;
-      return;
-    }
-    iconLoaded = false;
-    iconDataUrl = null;
-    let canceled = false;
-    iconCache.getIcon(pkg).then((result) => {
-      if (canceled) return;
-      iconDataUrl = result;
-      iconLoaded = true;
-    });
-    return () => { canceled = true; };
-  });
 </script>
 
 <button
@@ -122,16 +87,7 @@
   aria-current={selected ? "true" : undefined}
   onclick={() => onSelect?.(pkg)}
 >
-  <span class="icon-slot" aria-hidden="true">
-    {#if iconDataUrl}
-      <img src={iconDataUrl} alt="" width="24" height="24" class="cask-icon" />
-    {:else if pkg.iconSource.kind !== "none" && iconLoaded}
-      <!-- tried, no icon — small neutral fallback so casks remain visually distinct from formulae -->
-      <PackageIcon size={18} class="fallback-icon" />
-    {/if}
-    <!-- packages with iconSource.kind === "none" (formulae, casks with no app + no homepage)
-         intentionally render an empty 24px slot so the name column stays aligned -->
-  </span>
+  <PackageRowIcon token={pkg.name} kind={pkg.kind} iconSource={pkg.iconSource} homepage={pkg.homepage} />
   <span class="name truncate" title={pkg.name}>
     <span class="name-text">{pkg.name}</span>
     {#if friendlyOf(pkg.name)}
@@ -220,31 +176,6 @@
   }
   .row.selected .version,
   .row.selected .upgrade { color: inherit; }
-
-  .icon-slot {
-    width: 24px;
-    height: 24px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    /* no transition / no fade-in — designSystem §6 says terminal-style instant for lists */
-  }
-  .cask-icon {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px; /* matches macOS app-icon rounding-feel without faking the squircle */
-    object-fit: contain;
-    display: block;
-  }
-  .row :global(.fallback-icon) {
-    color: var(--color-text-muted);
-    opacity: 0.6;
-  }
-  .row.selected :global(.fallback-icon) {
-    color: var(--color-text-inverse);
-    opacity: 0.7;
-  }
 
   /* Vertical flex container so the optional AI-enriched friendly_name
      subtitle (Phase 13) stacks below the raw token. Children manage

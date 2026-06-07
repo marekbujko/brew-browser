@@ -365,7 +365,7 @@ The v0.4.0 outbound enumeration is at ten paths (path j is the most recent — o
 
 **Trade-off accepted:** Two codebases for the same product while the experiment runs. Mitigated by it being clearly branch-scoped and uncommitted; if it doesn't prove out, the branch is abandoned with zero impact on `main`. Sparkle-based in-app updates are the one subsystem not yet ported (deferred).
 
-**References:** `native/README.md`, `techContext.md` ("Native rebuild" section), `tasks/2026-05/21-native-swift-liquid-glass-rebuild.md`, `progress.md` (2026-05-31), cross-session memory `project-native-swift-rebuild.md`.
+**References:** `native/README.md`, `techContext.md` ("Native rebuild" section), `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`, `progress.md` (2026-05-31), cross-session memory `project-native-swift-rebuild.md`.
 
 ## 2026-06-01: Keep BOTH codebases (Tauri + Swift) — parity charter (Option A)
 
@@ -427,6 +427,24 @@ project doesn't justify the bridge engineering of Option B yet.
 nothing (the 2026-05-30 native-rebuild ADR framed the Swift app as an experiment
 "unless/until it proves out" — this commits to keeping both regardless, with
 defined roles). See [[project-native-swift-rebuild]] cross-session memory.
+
+## 2026-06-02: Tauri←native parity on a main-rooted branch; canonical velocity threshold; one-prompt Keychain
+
+**Context:** The native macOS rebuild (`experiment/native-swift-liquid-glass`) pulled ahead in a few user-visible places. Per the parity charter (2026-06-01), the two builds are kept in feature/data-contract parity, so this work flows back to the shipped Tauri app. Full task record: `tasks/2026-06/01-tauri-native-parity.md`.
+
+**Decisions:**
+
+1. **Branch `tauri-parity` is rooted on `main`, not the experiment branch.** Verified every touched file (Svelte components, `auth.rs`, `Cargo.*`) was byte-identical between `main` and the experiment HEAD, so `git checkout main && git checkout -b tauri-parity` carried the uncommitted work over with zero conflicts. Keeps the eventual PR into `main` clean (no native commits in history). `native/` is untracked on this branch and excluded from commits.
+
+2. **Canonical Trending velocity badge = formula-faithful banded.** `velocity_index` (`velocity.rs`) is documented as "1.0≈steady, >1.5 surging, <0.7 cooling." Native shipped a BINARY `v >= 1 ? flame : snowflake`, which mislabels near-steady packages (e.g. 1.05) as surging. Canonical rule for BOTH builds: `>=1.5` 🔥 / `<=0.7` ❄️ / otherwise neutral (no icon). Tauri's `velocityTier` updated (cool bound 0.5→0.7); native's binary→banded change is the reverse-parity item (memory `project-native-reverse-parity`).
+
+3. **GitHub Keychain status check = one batched read.** Native collapsed three `SecItemCopyMatching` calls (token/username/scopes) into one `kSecMatchLimitAll` query → one auth prompt. Ported to Tauri via a `KeychainSlot::read_many` default (per-account) + a macOS `SystemKeychain` override using the `security-framework` crate's `ItemSearchOptions(...).limit(Limit::All)`. The `keyring` crate has no batch API, hence the direct Security-framework use. Three-account storage schema unchanged (keeps parity + existing users' tokens).
+
+**Rejected alternatives:**
+- *Single JSON-blob Keychain item* (one read, no new dep) — rejected: orphans existing tokens (forced re-sign-in) and diverges from native's three-account layout, breaking the keychain parity contract.
+- *Make Tauri's velocity match native's binary* — rejected: native is the less-correct side here; aligning to the formula's documented bands is the right canonical.
+
+**Outcome:** Tauri parity work complete and verified (`npm run check` clean, Rust compiles, screenshots confirmed). Native reverse-parity backlog captured in memory `project-native-reverse-parity`.
 
 ### 2026-06-06: Native deploy-prep decisions (parity push, Sparkle, rename)
 **Status:** Approved + implemented (task `tasks/2026-06/10-*`).
