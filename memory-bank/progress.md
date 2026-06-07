@@ -7,6 +7,7 @@
 - ✅ **#57** operation progress counts ("Pouring N of M") from brew `==>` markers — both builds.
 - ✅ **Native test target** (first ever): 0 → 36 tests (Swift Testing) mirroring the Rust fixtures + fuzz. Rust gained matching fuzz tests.
 - ✅ **Pre-release security pass** — cargo audit 0 vulns, semgrep 0, gitleaks clean (false positives suppressed). Manual injection/path/CSP/signature/token review all pass. `audit.toml` documents Linux-only unmaintained deps. See `security.md` §19 + `tasks/2026-06/11-*`.
+- ✅ **Docs + landing for dual-build** — README/SECURITY/CONTRIBUTING now cover both Tauri + native builds (+ Hall of fame for @neodave / #46); new dashboard screenshots; **landing page published live** (rsync, no `--delete`, updater.json verified intact); `landing/README.md` `--delete` footgun fixed.
 - On branch `feat/launch-batch-progress-category-upgrade` (off main). Runtime/MITM tests deferred (hands-on).
 
 ## 2026-06-03 — native: live enrichment + task notifications (experiment)

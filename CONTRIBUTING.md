@@ -2,11 +2,13 @@
 
 Thanks for considering a contribution. This project is small, opinionated, and deliberately open. The bar for landing changes is "does it match the patterns already here and not break anything," not "have you signed paperwork."
 
+Brew Browser ships in **two builds** that share one design + data contract: the cross-platform **Tauri** app (`src/` + `src-tauri/`) and the native **Swift/SwiftUI** app (`native/`). See [README → Two builds](./README.md#two-builds) and the `memory-bank/decisions.md` parity ADR (2026-06-01). **A change to a shared data contract — `settings.json` schema, bundled `categories.json`/`enrichment.json`, the `brew`/`brew vulns` invocations, or the trending/enrichment endpoints — should land in (or be logged as a gap against) both builds.**
+
 ## TL;DR
 
 1. Fork the repo, create a topic branch off `main`.
 2. Make your change. Keep it small and focused.
-3. Run `cargo test` and `npm run check` before pushing.
+3. Run the checks for the build(s) you touched: Tauri → `cargo test` + `npm run check`; native → `swift build` + `swift test` (in `native/`).
 4. Open a PR with a short description of what changed and why.
 
 **No CLA. No rights assignment.** Your contributions remain yours, licensed under [MIT](./LICENSE) to match the project. By opening a PR you confirm you wrote the change or have the right to contribute it under that license.
@@ -32,6 +34,18 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 `npm run tauri build` produces a `.dmg` under `src-tauri/target/release/bundle/` if you want to test a real artifact.
+
+### Native build (macOS 26)
+
+The native app needs **macOS 26 + a recent Xcode toolchain** (`xcode-select -p` should point at `Xcode.app`, not Command Line Tools). It's a pure Swift Package — no `.xcodeproj`.
+
+```sh
+cd native
+swift build                 # compile
+swift test                  # unit tests (Swift Testing)
+./build-app.sh              # wrap into Brew Browser.app
+open BrewBrowser.app        # run (use the .app, not `swift run` — Sparkle needs the bundle)
+```
 
 ## Project structure
 
@@ -60,6 +74,16 @@ brew-browser/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
 │   └── capabilities/default.json
+├── native/                         native Swift 6 + SwiftUI build (Swift Package)
+│   ├── Sources/
+│   │   ├── BrewBrowser/            thin @main App entry
+│   │   └── BrewBrowserKit/         views, AppModel, services (Brew/GitHub/Vulns/…),
+│   │       │                       BrewOutputParsing.swift, bundled JSON Resources/
+│   │       └── …
+│   ├── Tests/BrewBrowserKitTests/  swift test (Swift Testing) — parity fixtures
+│   ├── Package.swift
+│   ├── build-app.sh                wrap the SPM binary into Brew Browser.app
+│   └── release.sh                  signed + notarized release + Sparkle appcast
 ├── memory-bank/                    living design docs (read these before any non-trivial change)
 ├── docs/                           BUILD instructions, PLAN.md, PHILOSOPHY.md, release-notes/, icon/, screenshots/
 ├── LICENSE                         MIT
@@ -93,6 +117,7 @@ The component conventions are in [`memory-bank/designSystem.md`](./memory-bank/d
 - **Rust:** `cargo test --manifest-path src-tauri/Cargo.toml`. Unit tests live inline under `#[cfg(test)] mod tests`; fixture-driven parser tests use the JSON under `src-tauri/tests/fixtures/`.
 - **Integration (real brew):** `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored` — these spawn real `brew` and require Homebrew on the host.
 - **Frontend:** `npm run check` (svelte-check + tsc). There is no Vitest suite yet; adding one is welcome.
+- **Native:** `cd native && swift test` (Swift Testing). The native suite mirrors the Rust fixtures for the shared parsing/classification logic (brew output, vuln keying, settings contract) — when you change shared behavior, update both sides' fixtures so they stay pinned together.
 
 A PR that introduces new logic without tests will get a request for tests, not a rejection. A PR that breaks an existing test will get a request to fix it.
 

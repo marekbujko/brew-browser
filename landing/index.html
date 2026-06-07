@@ -12,10 +12,10 @@
   <meta name="robots" content="index, follow, max-image-preview:large">
 
   <!-- Primary meta -->
-  <title>brew-browser — a native macOS GUI for Homebrew</title>
+  <title>Brew Browser — a native macOS GUI for Homebrew (Tauri + SwiftUI)</title>
   <meta name="description" content="Browse, search, install, and snapshot Homebrew packages from a small, fast native desktop app. Full source. MIT licensed. No telemetry, no accounts.">
   <meta name="author" content="Michael Sitarzewski">
-  <meta name="keywords" content="homebrew, brew, macOS, GUI, package manager, Tauri, Svelte, Rust, MIT, open source, desktop app">
+  <meta name="keywords" content="homebrew, brew, macOS, GUI, package manager, Tauri, Svelte, Rust, Swift, SwiftUI, native, MIT, open source, desktop app">
 
   <!-- Favicons & app icons -->
   <link rel="icon" type="image/svg+xml" href="/brew-browser.svg">
@@ -32,7 +32,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="brew-browser">
   <meta property="og:url" content="https://brew-browser.zerologic.com/">
-  <meta property="og:title" content="brew-browser — a native macOS GUI for Homebrew">
+  <meta property="og:title" content="Brew Browser — a native macOS GUI for Homebrew (Tauri + SwiftUI)">
   <meta property="og:description" content="Browse, search, install, and snapshot Homebrew packages. Full source. MIT licensed. No telemetry, no accounts.">
   <meta property="og:image" content="https://brew-browser.zerologic.com/social-card.png">
   <meta property="og:image:type" content="image/png">
@@ -46,7 +46,7 @@
   <meta name="twitter:site" content="@msitarzewski">
   <meta name="twitter:creator" content="@msitarzewski">
   <meta name="twitter:url" content="https://brew-browser.zerologic.com/">
-  <meta name="twitter:title" content="brew-browser — a native macOS GUI for Homebrew">
+  <meta name="twitter:title" content="Brew Browser — a native macOS GUI for Homebrew (Tauri + SwiftUI)">
   <meta name="twitter:description" content="Browse, search, install, and snapshot Homebrew packages. Full source. MIT licensed. No telemetry, no accounts.">
   <meta name="twitter:image" content="https://brew-browser.zerologic.com/social-card.png">
   <meta name="twitter:image:alt" content="brew-browser app icon on a dark background, with the wordmark and tagline 'A native macOS GUI for Homebrew.'">
@@ -85,25 +85,29 @@
 
   <header class="hero">
     <div class="hero-inner">
-      <img src="/brew-browser.svg" alt="brew-browser icon" class="hero-icon" width="160" height="160">
-      <h1>brew-browser</h1>
-      <p class="tagline">A native macOS GUI for Homebrew.</p>
-      <p class="sub">Browse what you have installed. Search the full catalog. Install, uninstall, upgrade with live output. Snapshot your setup to a Brewfile and restore it on a new Mac.</p>
+      <img src="/brew-browser.svg" alt="Brew Browser icon" class="hero-icon" width="160" height="160">
+      <h1>Brew Browser</h1>
+      <p class="tagline">A native macOS GUI for Homebrew — in two builds.</p>
+      <p class="sub">Browse what you have installed. Search the full catalog. Install, uninstall, upgrade with live output. Snapshot your setup to a Brewfile and restore it on a new Mac. Shipped as a cross-platform <strong>Tauri</strong> app and a fully native <strong>Swift / SwiftUI</strong> app.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="https://github.com/msitarzewski/brew-browser/releases/latest">Download</a>
         <a class="btn btn-secondary" href="https://github.com/msitarzewski/brew-browser">Source on GitHub</a>
       </div>
-      <p class="small-note">macOS 13+ · Apple Silicon · MIT licensed · No telemetry, no accounts</p>
+      <p class="small-note">Tauri: macOS 13+ &amp; Linux · Native: Swift/SwiftUI, macOS 26 · Apple Silicon · MIT · no telemetry, no accounts</p>
     </div>
   </header>
 
   <main>
 
     <section class="section section-shots">
-      <picture class="hero-shot">
-        <source srcset="/screenshots/dashboard-dark.png" media="(prefers-color-scheme: dark)">
-        <img src="/screenshots/dashboard-light.png" alt="brew-browser — Dashboard view showing 325 installed packages, 11 updates available, brew 5.1.13, formula/cask composition, top-categories donut, and storage usage." loading="lazy">
-      </picture>
+      <figure class="hero-shot">
+        <img src="/screenshots/dashboard-tauri.png" alt="Brew Browser — Tauri build, Dashboard (dark): 331 installed packages, 31 updates available, composition pie, top-categories donut, exposure card, and storage usage." loading="lazy">
+        <figcaption>Tauri build — macOS 13+ &amp; Linux</figcaption>
+      </figure>
+      <figure class="hero-shot">
+        <img src="/screenshots/dashboard-native.png" alt="Brew Browser — native Swift/SwiftUI build, Dashboard (dark): the same data in a fully native macOS 26 interface." loading="lazy">
+        <figcaption>Native build — Swift / SwiftUI, macOS 26</figcaption>
+      </figure>
     </section>
 
     <section class="section">
@@ -156,8 +160,8 @@
         </div>
 
         <div class="feature">
-          <h3>Native &amp; fast</h3>
-          <p>Tauri 2 native shell, system WebView, native macOS title bar with traffic-light alignment. Cmd+K command palette, Cmd+0…6 to jump between sections, persistent type-ahead search in the sidebar, drag-resizable detail pane, collapsible sidebar.</p>
+          <h3>Two builds, one design</h3>
+          <p>A cross-platform <strong>Tauri 2</strong> app (Rust + SvelteKit) for macOS 13+ and Linux, and a fully native <strong>Swift 6 + SwiftUI + Liquid Glass</strong> app for macOS 26 — same features, same <code>brew</code> integration, same privacy posture, kept in lock-step parity. Cmd+K palette, Cmd+0…6 section jumps, type-ahead search, live Activity drawer in both.</p>
         </div>
 
       </div>
@@ -204,12 +208,18 @@
       <pre><code>brew tap msitarzewski/brew-browser
 brew install --cask brew-browser</code></pre>
       <p>Installs the same notarized <code>.dmg</code>.</p>
-      <p>Or build it yourself from source:</p>
+      <p>Or build it yourself from source — the cross-platform <strong>Tauri</strong> build:</p>
       <pre><code>git clone https://github.com/msitarzewski/brew-browser
 cd brew-browser
 npm install
 npm run tauri build      # produces a .dmg in src-tauri/target/release/bundle/</code></pre>
       <p class="small-note">Prereqs: <a href="https://rustup.rs">Rust</a>, Node 22+, <a href="https://brew.sh">Homebrew</a>, Xcode Command Line Tools.</p>
+      <p>…or the fully native <strong>Swift / SwiftUI</strong> build (macOS 26):</p>
+      <pre><code>cd brew-browser/native
+swift build
+./build-app.sh           # wraps into Brew Browser.app
+open BrewBrowser.app</code></pre>
+      <p class="small-note">Prereqs: macOS 26 + a recent Xcode toolchain. The native build lives in <code>native/</code> as a Swift Package.</p>
     </section>
 
   </main>

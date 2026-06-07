@@ -62,7 +62,25 @@ Tools: cargo audit, npm audit, osv-scanner, gitleaks, semgrep + manual review.
   validation, updater-tamper rejection) — statically verified, deferred to a
   hands-on session.
 
+## Docs + landing (dual-build)
+- **README / SECURITY / CONTRIBUTING** rewritten to cover **both builds** (Tauri +
+  native Swift/SwiftUI): title → "Brew Browser", a SwiftUI badge, both new
+  dashboard screenshots, a "Two builds" comparison + parity rule, native
+  build-from-source, native architecture, refreshed dependency/security posture.
+- **SECURITY.md Hall of fame** — credited **@neodave** for the Brewfile/snapshot
+  path-traversal fix (#46), noted as defended in both builds.
+- **New screenshots** `docs/screenshots/dashboard-tauri.png` (Tauri) +
+  `dashboard-native.png` (native). (First copied swapped, then corrected.)
+- **Landing page** (`landing/index.html`) updated for dual-build + both
+  screenshots and **published live** to `brew-browser.zerologic.com` via
+  `rsync` (NO `--delete`) — verified `updater.json` survived.
+- **Footgun fixed:** `landing/README.md` no longer documents a bare
+  `rsync --delete` to the web root (that root also serves `updater.json`; a
+  `--delete` from `landing/` would wipe the Tauri updater). Host genericized out
+  of the committed file. Build-host details live in auto-memory only.
+
 ## Outcome
 `cargo check` clean, `cargo test` green, `npm run check` 0 errors, `swift build`
 clean, `swift test` 36 pass. Filed #57 + #58 (crediting Reddit requesters).
 Six more Reddit feature requests triaged but NOT filed (awaiting go-ahead).
+Landing page live with both builds.

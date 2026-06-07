@@ -1,15 +1,29 @@
-# brew-browser
+# Brew Browser
 
-> A native macOS GUI for Homebrew.
+> A native macOS GUI for Homebrew — shipped in **two builds**.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Built with Tauri 2](https://img.shields.io/badge/Built%20with-Tauri%202-orange)](https://tauri.app)
+[![Native: Swift + SwiftUI](https://img.shields.io/badge/Native-Swift%20%2B%20SwiftUI-blue?logo=swift&logoColor=white)](https://developer.apple.com/swiftui/)
 [![macOS 13+](https://img.shields.io/badge/macOS-13%2B-lightgrey)](https://www.apple.com/macos)
 [![Sponsor](https://img.shields.io/badge/♥-Sponsor-EC4899?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/msitarzewski)
 
 A small, fast desktop app for browsing, searching, installing, and snapshotting Homebrew packages. Full source, MIT-licensed, no telemetry, no accounts.
 
-![brew-browser — Dashboard (dark)](docs/screenshots/dashboard-dark.png)
+**Brew Browser comes in two builds that share one design and one data contract:**
+
+- **Tauri build** — the cross-platform app: macOS 13+ (Ventura and up) **and** Linux. The shipping, signed-and-notarized download.
+- **Native build** — a fully native **Swift 6 + SwiftUI + Liquid Glass** app for **macOS 26** (Tahoe). The "genuinely native" answer, ~half the memory.
+
+Same features, same `brew` integration, same privacy posture — see [Two builds](#two-builds) below.
+
+**Tauri build** (macOS 13+ · Linux)
+
+![Brew Browser — Tauri build, Dashboard (dark)](docs/screenshots/dashboard-tauri.png)
+
+**Native build** (Swift / SwiftUI · macOS 26)
+
+![Brew Browser — native SwiftUI build, Dashboard (dark)](docs/screenshots/dashboard-native.png)
 
 ## Why this exists
 
@@ -33,6 +47,28 @@ A global Cmd+K command palette covers the verbs. Cmd+0 returns to the Dashboard;
 - Not a Homebrew replacement — every action shells out to the real `brew` CLI
 - Not telemetry-funded — no analytics, no accounts, no phone-home
 - Not freemium — there is no paid tier, because there is no tier
+
+## Two builds
+
+Brew Browser is maintained as **two implementations of the same app**, kept in
+feature + data-contract parity. They are not competitors — they have different,
+non-overlapping jobs, because SwiftUI does not run on Linux and Liquid Glass is
+macOS-26-only.
+
+| | **Tauri build** | **Native build** |
+|---|---|---|
+| Stack | Tauri 2 · SvelteKit · Rust | Swift 6 · SwiftUI · Liquid Glass |
+| Runs on | **macOS 13+ and Linux** | **macOS 26 (Tahoe)** |
+| Role | the shipping cross-platform app | the genuinely-native macOS flagship |
+| Source | `src/` (frontend) + `src-tauri/` (Rust) | `native/` (Swift Package) |
+| Updates | in-app updater (minisign) | Sparkle 2 (ed25519) |
+| Status | shipping, signed + notarized | in development on `main` |
+
+Both read the same `settings.json` schema, the same bundled `categories.json` /
+`enrichment.json`, the same `brew` / `brew vulns` invocations, and the same
+trending + enrichment endpoints. A change to a shared data contract lands in both.
+The memory bank (`memory-bank/`) is the single canonical spec for both. Rationale
+and parity rules: `memory-bank/decisions.md` (2026-06-01 "keep both" ADR).
 
 ## Install (end users)
 
@@ -68,9 +104,25 @@ npm run tauri dev      # development with HMR
 npm run tauri build    # produces a .dmg in src-tauri/target/release/bundle/
 ```
 
+### Native build (macOS 26)
+
+The native Swift/SwiftUI app lives in `native/` as a Swift Package. Requires
+macOS 26 + a recent Xcode toolchain.
+
+```sh
+cd native
+swift build                 # compile the library + executable
+./build-app.sh              # wrap into a launchable Brew Browser.app
+open BrewBrowser.app        # run it (use the .app, not `swift run` — Sparkle needs the bundle)
+swift test                  # unit tests
+./release.sh                # signed + notarized release + Sparkle appcast (maintainer)
+```
+
 ## Architecture
 
-A Tauri 2 shell hosts a SvelteKit + Svelte 5 frontend in the system WebView. A Rust backend exposes ~55 typed Tauri commands that shell out to `brew` via `tokio::process` and stream stdout/stderr back over typed IPC channels. The full Homebrew catalog is bundled at build time (~6 MiB gzipped) and refreshable on demand. Trending data comes straight from `formulae.brew.sh`'s public analytics JSON, cached in memory for an hour. Optional GitHub integration uses OAuth Device Flow with the token stored only in the macOS Keychain. No shell plugin, no arbitrary command execution — every `brew` invocation is built in Rust from a small set of enumerated inputs. See [docs/PLAN.md](./docs/PLAN.md) for the full design and [memory-bank/backendApi.md](./memory-bank/backendApi.md) for the complete IPC surface.
+**Tauri build:** a Tauri 2 shell hosts a SvelteKit + Svelte 5 frontend in the system WebView. A Rust backend exposes ~55 typed Tauri commands that shell out to `brew` via `tokio::process` and stream stdout/stderr back over typed IPC channels. The full Homebrew catalog is bundled at build time (~6 MiB gzipped) and refreshable on demand. Trending data comes straight from `formulae.brew.sh`'s public analytics JSON, cached in memory for an hour. Optional GitHub integration uses OAuth Device Flow with the token stored only in the macOS Keychain. No shell plugin, no arbitrary command execution — every `brew` invocation is built in Rust from a small set of enumerated inputs. See [docs/PLAN.md](./docs/PLAN.md) for the full design and [memory-bank/backendApi.md](./memory-bank/backendApi.md) for the complete IPC surface.
+
+**Native build:** a Swift 6 + SwiftUI app (`native/`, a Swift Package — no `.xcodeproj`). Stock Apple scaffolding only — `NavigationSplitView`, `.inspector`, `Settings`/`SettingsLink`, `Form`, Liquid Glass materials — no custom window chrome. Stateless services (`BrewService`, `GitHubService`, `VulnsService`) are `Sendable struct`s that mirror the Rust modules and shell out to `brew` via `Foundation.Process` with typed argument arrays (no shell). The same bundled JSON data contract; settings persist to the same `settings.json` schema; updates via Sparkle 2. See `native/README.md`.
 
 ## Open-source posture
 
@@ -101,11 +153,14 @@ The full network posture is verified line-by-line in [`memory-bank/security.md`]
 
 A full security audit lives at [`memory-bank/security.md`](./memory-bank/security.md). Current verdict: **READY-FOR-SCRUTINY** (0 critical / 0 high / 0 medium / 0 low / 0 nit open). All 16 findings from the initial audit are verified-fixed with passing tests. Independent tool battery passes: `cargo audit` 0 vulns, `cargo deny check` advisories+bans+licenses+sources ok, `npm audit --omit=dev` 0 vulns, `semgrep` with security-audit + OWASP-top-10 + Rust + TypeScript rulesets 0 findings, `cargo clippy -D warnings` clean. Zero `unsafe` Rust, zero `@html`/`innerHTML`/`eval` in the frontend, no `tauri-plugin-shell` (every brew invocation is built from typed Rust enums). SSRF defense includes a redirect-policy re-check on every hop.
 
+A pre-release security pass (2026-06-07) covered **both builds** — automated scans (cargo audit, npm audit, osv-scanner, gitleaks, semgrep) plus manual review of command injection, path traversal, the Tauri CSP/capabilities, update-signature verification, and token handling. Verdict: clean for release; details in [`memory-bank/security.md`](./memory-bank/security.md) §19.
+
 Dependency posture:
 
-- **Rust:** `cargo audit` reports 0 vulnerabilities across 540 crates. The 17 unmaintained warnings and 1 unsoundness all sit in GTK/glib transitive deps that compile out on macOS.
-- **npm (production):** `npm audit --omit=dev` reports 0 vulnerabilities across 25 production packages.
-- **Zero `unsafe` Rust** in the entire backend.
+- **Rust:** `cargo audit` reports **0 vulnerabilities** across 566 crates. The remaining "unmaintained" warnings are all Linux-only GTK3/glib transitive deps that compile out on macOS — documented in `src-tauri/.cargo/audit.toml`.
+- **npm:** 3 low (transitive `cookie <0.7.0` via SvelteKit) — no real surface in a desktop app; tracked, not force-patched.
+- **Zero `unsafe` Rust** in the entire backend; `semgrep` security rulesets report 0 findings; brew-output parsers are fuzzed in both languages.
+- **Both builds shell out to `brew` with typed argument arrays (no shell)**, validate package names against an allowlist, and reject `..`/path-separators in Brewfile/snapshot ids. The native build has its own test target (`native/Tests/`, `swift test`) covering the parity-critical parsing/classification logic with fixtures mirroring the Rust tests.
 
 Defense-in-depth choices:
 

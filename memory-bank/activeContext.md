@@ -11,10 +11,15 @@
 > - **Pre-release security pass** clean (cargo audit 0 vulns, semgrep 0, gitleaks
 >   clean; injection/path/CSP/signature review pass). `audit.toml` +
 >   `.gitleaksignore` added. See `tasks/2026-06/11-*` and `security.md` §19.
+> - **Docs + landing** rewritten for **both builds** (README/SECURITY/CONTRIBUTING +
+>   Hall of fame for @neodave/#46); new dashboard screenshots; **landing page
+>   published live** to brew-browser.zerologic.com (rsync, no `--delete`).
 > - QA: `cargo test` green, `npm run check` 0 errors, `swift build` + `swift test`
 >   (36) green. Runtime/MITM tests deferred (hands-on).
-> - **Next:** commit + push + PR; deploy still pending (native notarization).
+> - **Next:** PR `feat/launch-batch…` → `main`; then native notarization deploy.
 > - Filed #57/#58; six more Reddit feature requests triaged, NOT yet filed.
+> - Build host: ssh `umacbookpro` (see auto-memory [[reference-build-host]]) — one
+>   web root serves landing + `updater.json`; never `rsync --delete` it.
 >
 > ---
 >
