@@ -732,6 +732,13 @@
     pkg ? vulnerabilities.byPackage(pkg.kind, pkg.name) : undefined,
   );
 
+  /** A green "no known vulnerabilities" all-clear is only honest when this
+      package was scanned THIS session — a record hydrated from cache on launch
+      is stale, so we caution + prompt a re-scan instead. */
+  let securityFresh = $derived(
+    securityRecord ? vulnerabilities.scannedThisSession(securityRecord.scannedAt) : false,
+  );
+
   /** True while a scan IPC is in flight (any scan, since the store is
       single-flight). Used to disable buttons and show a spinner. */
   let securityLoading = $derived(vulnerabilities.loading);
@@ -1057,18 +1064,40 @@
                   class="sec-btn sec-btn-primary"
                   disabled={securityLoading}
                   onclick={checkSecurity}
+                  title="Runs brew vulns across your whole install — it can't scan a single package"
                 >
                   {#if securityLoading}
                     <Loader size={14} class="spin-slow" />
-                    <span>Checking…</span>
+                    <span>Scanning all…</span>
                   {:else}
                     <Shield size={14} />
-                    <span>Check now</span>
+                    <span>Scan all packages</span>
                   {/if}
                 </button>
               </div>
+            {:else if securityRecord.vulns.length === 0 && !securityFresh}
+              <!-- State 2a: clean LAST scan, but stale (cached / from a prior
+                   session). Don't claim all-clear — caution + re-scan prompt. -->
+              <div class="sec-head">
+                <ShieldAlert size={16} class="sec-icon-warn" />
+                <h3>Security</h3>
+              </div>
+              <p class="sec-clean">
+                No advisories as of the last scan ({relativeScanTime(securityRecord.scannedAt)}). Packages may have changed since — re-scan to confirm.
+              </p>
+              <div class="sec-foot">
+                <button
+                  type="button"
+                  class="sec-link"
+                  disabled={securityLoading}
+                  onclick={checkSecurity}
+                  title="Runs brew vulns across your whole install — it can't scan a single package"
+                >
+                  {securityLoading ? "Scanning all…" : "Re-scan all"}
+                </button>
+              </div>
             {:else if securityRecord.vulns.length === 0}
-              <!-- State 2: scanned, clean -->
+              <!-- State 2b: scanned clean THIS session -->
               <div class="sec-head sec-head-clean">
                 <ShieldCheck size={16} class="sec-icon-clean" />
                 <h3>Security</h3>
@@ -1087,8 +1116,9 @@
                   class="sec-link"
                   disabled={securityLoading}
                   onclick={checkSecurity}
+                  title="Runs brew vulns across your whole install — it can't scan a single package"
                 >
-                  {securityLoading ? "Re-checking…" : "Re-check"}
+                  {securityLoading ? "Scanning all…" : "Re-scan all"}
                 </button>
               </div>
             {:else}
@@ -1177,8 +1207,9 @@
                   class="sec-link"
                   disabled={securityLoading}
                   onclick={checkSecurity}
+                  title="Runs brew vulns across your whole install — it can't scan a single package"
                 >
-                  {securityLoading ? "Re-checking…" : "Re-check"}
+                  {securityLoading ? "Scanning all…" : "Re-scan all"}
                 </button>
               </div>
             {/if}
@@ -2055,6 +2086,7 @@
   }
   .sec-card :global(.sec-icon) { color: var(--color-text-secondary); }
   .sec-card :global(.sec-icon-clean) { color: var(--color-success-on-subtle, var(--color-success)); }
+  .sec-card :global(.sec-icon-warn)  { color: var(--color-warning-on-subtle, var(--color-warning)); }
   .sec-card :global(.sec-icon-vuln)  { color: var(--color-danger-on-subtle, var(--color-danger)); }
 
   .sec-cta {

@@ -347,6 +347,87 @@ The v0.4.0 outbound enumeration is at ten paths (path j is the most recent — o
 
 **Outcome:** tap live at `msitarzewski/homebrew-brew-browser`. README + landing page updated to lead with the `brew` install. projectbrief Distribution section added.
 
+## 2026-05-30: Native Swift / SwiftUI / Liquid Glass rebuild (experiment)
+
+**Context:** The v0.5.0 launch drew recurring "Tauri isn't native" criticism. The 2026-05-23 "Tauri 2 over Electron/Flutter/GPUI" decision still holds for the shipped product, but it's worth empirically testing how close a fully native rebuild gets — both to answer the criticism and to evaluate macOS 26's Liquid Glass as a possible future direction.
+
+**Decision:** Spin up an experiment branch (`experiment/native-swift-liquid-glass`) that **ports** the existing interface to Swift 6 + SwiftUI + Liquid Glass (macOS 26 Tahoe), living in `native/` as a Swift Package. This is explicitly a port, **not** a redesign: data sources and functionality stay identical to the Tauri app (trending, AI-enhanced categories, GitHub integration, vulnerability scanning, auto-update). Does **not** supersede the 2026-05-23 Tauri decision — the production app stays Tauri on `main` unless/until this experiment proves out.
+
+**Sub-decisions:**
+- **SPM (`swift build`), not an Xcode project.** Full Xcode is installed but `xcode-select` points at Command Line Tools, so `xcodebuild` is unavailable from the CLI. `swift build` works under CLT and links every Liquid Glass API. `native/build-app.sh` wraps the SPM binary into a launchable `.app` (SPM alone produces a bare binary with no `Info.plist`, which macOS treats as a background process). Switching the toolchain (`sudo xcode-select -s`) was declined to keep the CLI build path.
+- **Stock Apple scaffolding only — no overrides.** No custom window chrome, no `NSVisualEffectView`, no faked backgrounds. Established after several failed attempts to hand-build Xcode-like chrome: `NavigationSplitView`, `.inspector`, `Settings {}` + `SettingsLink`, `TabView`, `Form` carry the whole UI. When the stock default and a pixel-perfect custom look disagree, the stock default wins. (Contrast the 2026-05-24 Tauri "Vibrancy via `window-vibrancy`" decision — the native build deliberately avoids that whole class of window-material hacking.)
+- **Reuse the Tauri data contracts verbatim.** `settings.json` keeps the same path + schema (Swift `AppSettings` ⇄ Rust `Settings`); bundled `categories.json` + `enrichment.json` are copied from `src-tauri/data/` (uncompressed in the native build for now). The brew/vulns/github/trending behaviors are reimplemented as Swift `actor`s mirroring the Rust modules, not redesigned.
+
+**Rationale:**
+- Settles the "native" question with a real artifact instead of a debate.
+- Keeping it a strict port means the comparison is apples-to-apples and the memory bank remains the single spec for both shells.
+- Stock-only keeps the experiment honest about what the platform gives for free vs. what required fighting it.
+
+**Trade-off accepted:** Two codebases for the same product while the experiment runs. Mitigated by it being clearly branch-scoped and uncommitted; if it doesn't prove out, the branch is abandoned with zero impact on `main`. Sparkle-based in-app updates are the one subsystem not yet ported (deferred).
+
+**References:** `native/README.md`, `techContext.md` ("Native rebuild" section), `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`, `progress.md` (2026-05-31), cross-session memory `project-native-swift-rebuild.md`.
+
+## 2026-06-01: Keep BOTH codebases (Tauri + Swift) — parity charter (Option A)
+
+**Decision:** Maintain the Tauri app AND the native Swift app long-term, in
+**feature + data-contract parity** (NOT code parity). This is "Option A —
+disciplined double-implementation." Option B (a shared `brew-core` Rust crate
+behind both UIs, via sidecar-JSON or FFI) was considered and **deferred** — only
+revisit when the same brew/parse bug has been fixed in both languages a third
+time (i.e. when double-maintenance demonstrably hurts). If revisited, prefer the
+**sidecar-JSON** approach over FFI (FFI's Swift↔Rust marshaling complexity
+rarely pays off for a solo project).
+
+**Why both (the hard constraint):** SwiftUI does NOT run on Linux and never will
+(Swift-the-language does; SwiftUI is Apple-only; Liquid Glass is macOS-26-only).
+So the two apps have **distinct, non-overlapping jobs** — neither can replace the
+other:
+- **Tauri** = the Linux app (`feat/linux-support`, builds on Ubuntu arm64) AND
+  the pre-Tahoe macOS app (runs macOS 13+). The shipping product on `main`.
+- **Swift** = the macOS-26 flagship (the "genuinely native" answer to the
+  "Tauri isn't native" chatter). Requires macOS 26.
+
+**Linux release is ORTHOGONAL to the Swift work** — it's pure Tauri (merge
+`feat/linux-support`, CI for `.deb`/`.AppImage`, package, distribute). The Swift
+branch neither helps nor blocks it. Don't conflate the two tracks.
+
+### Parity rules (durable — these are instructions for future sessions)
+
+The agent (Claude Code), not a human, maintains parity. The memory-bank is the
+single canonical spec for BOTH apps. Concretely, every session:
+
+1. **Any change to a shared DATA CONTRACT must land in both apps in the same
+   work, or be explicitly logged as a parity gap.** Shared contracts:
+   `settings.json` (path + schema — Rust `Settings` ⇄ Swift `AppSettings`),
+   bundled `categories.json` + `enrichment.json` (Swift copies live at
+   `native/Sources/BrewBrowserKit/Resources/`, sourced from `src-tauri/data/`),
+   the trending endpoint (`brew-browser.zerologic.com`), GitHub OAuth client_id
+   (`Ov23liJZKbvrSBuiOPkT`), and the `brew`/`brew vulns` CLI invocations + their
+   parse gotchas.
+2. **Cross-reference comments ARE the parity map.** Swift services already cite
+   their Rust counterparts (e.g. `GitHubService.swift` → `auth.rs:NNN`,
+   `VulnsService.swift` → the 5 brew-vulns smoke-test gotchas). Keep these
+   citations current; when porting or fixing, read the cited Rust site first.
+3. **When fixing a brew-integration bug in one app, check + fix the other.**
+   The brew/vulns parse traps are identical across languages (same `brew` output).
+   A fix in Rust likely applies to Swift and vice-versa.
+4. **Bundled data refresh updates BOTH.** Re-running `tools/enrich` or
+   `tools/catalog` regenerates `src-tauri/data/*`; the Swift `Resources/` copies
+   must be re-copied in the same change (they're uncompressed copies).
+5. **Log parity gaps honestly.** If a feature ships in one app only (e.g. Swift
+   still lacks Sparkle updates + library-wide vuln scan-all), record it as a known
+   gap in the task record — don't let the two silently drift undocumented.
+
+**Trade-off accepted:** brew/vulns/github/trending logic is written twice (Rust +
+Swift). This taxes every new feature. Accepted because the data contracts already
+capture ~80% of parity value, the brew-parsing surface is stable, and a solo
+project doesn't justify the bridge engineering of Option B yet.
+
+**References:** the "keep both" question + analysis, 2026-06-01; supersedes
+nothing (the 2026-05-30 native-rebuild ADR framed the Swift app as an experiment
+"unless/until it proves out" — this commits to keeping both regardless, with
+defined roles). See [[project-native-swift-rebuild]] cross-session memory.
+
 ## 2026-06-02: Tauri←native parity on a main-rooted branch; canonical velocity threshold; one-prompt Keychain
 
 **Context:** The native macOS rebuild (`experiment/native-swift-liquid-glass`) pulled ahead in a few user-visible places. Per the parity charter (2026-06-01), the two builds are kept in feature/data-contract parity, so this work flows back to the shipped Tauri app. Full task record: `tasks/2026-06/01-tauri-native-parity.md`.
@@ -364,3 +445,24 @@ The v0.4.0 outbound enumeration is at ten paths (path j is the most recent — o
 - *Make Tauri's velocity match native's binary* — rejected: native is the less-correct side here; aligning to the formula's documented bands is the right canonical.
 
 **Outcome:** Tauri parity work complete and verified (`npm run check` clean, Rust compiles, screenshots confirmed). Native reverse-parity backlog captured in memory `project-native-reverse-parity`.
+
+### 2026-06-06: Native deploy-prep decisions (parity push, Sparkle, rename)
+**Status:** Approved + implemented (task `tasks/2026-06/10-*`).
+- **Vuln scan = one `brew vulns --json` over the install set, parsed per-record.**
+  `brew vulns --formula X` ignores the filter + returns everything; per-formula
+  iteration over-reported (every package flagged) and was ~331× slow. Both apps
+  now do a single call and key findings by `record.formula`. `VulnsService`
+  (Swift) is a `Sendable struct`, not an actor (serialization trap).
+- **Never show a green "no vulnerabilities" all-clear from a cached/stale scan.**
+  Green only when scanned THIS session; cache-hydrated → amber caution; never
+  scanned → hazard. A security tool must not imply safety it hasn't verified.
+- **Self-updater = Sparkle 2** (decided 2026-06-06). Public ed25519 key committed
+  in `build-app.sh`; private key in login Keychain; `native/release.sh` does the
+  signed+notarized release + appcast. Two update feeds coexist on the host
+  (`/appcast.xml` native, `/updater.json` Tauri) — never clobber one with the
+  other. Updater stays inert when run unbundled (Xcode/`swift run`).
+- **App display name = "Brew Browser"** (both builds). Native done freely (no
+  users). Tauri `productName` renamed too (renames the bundle file → flag the
+  duplicate-on-update migration for shipped 0.5.0 users in release notes).
+- **Versions stay independent** (native 0.1.0, Tauri 0.5.0) — separate apps,
+  separate bundle ids + update feeds; no edition marker / no "n" suffix.

@@ -66,7 +66,7 @@
 
       <div class="hero">
         <span class="brand-mark" aria-hidden="true">🍺</span>
-        <h1 id="about-title">brew-browser</h1>
+        <h1 id="about-title">Brew Browser</h1>
         <p class="tagline">A native macOS GUI for Homebrew.</p>
       </div>
 

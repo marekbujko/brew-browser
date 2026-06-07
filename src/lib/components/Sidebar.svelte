@@ -315,7 +315,7 @@
       >
         <span class="vuln-dot" aria-hidden="true"></span>
         <span class="vuln-count">{vulnBadgeCount}</span>
-        <span class="vuln-label">vulnerable</span>
+        <span class="vuln-label">vulnerable {vulnBadgeCount === 1 ? "package" : "packages"}</span>
       </button>
     {/if}
     <button

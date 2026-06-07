@@ -1,0 +1,13 @@
+# SwiftPM build output
+.build/
+
+# Assembled app bundle (produced by build-app.sh from the SPM binary)
+BrewBrowser.app/
+
+# Release artifacts (zip + appcast.xml from release.sh / generate_appcast)
+dist/
+
+# Xcode / SwiftPM local state
+.swiftpm/
+*.xcodeproj
+DerivedData/

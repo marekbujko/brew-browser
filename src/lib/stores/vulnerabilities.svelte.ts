@@ -154,6 +154,18 @@ class VulnerabilitiesStore {
       previous report. Null before the first scan. */
   source: "live" | "cache" | null = $state(null);
 
+  /** Wall-clock when this app session started (store construction ≈ app load).
+      A scan whose timestamp predates it was served from cache on launch — so a
+      confident "no vulnerabilities" all-clear would be stale. */
+  readonly #sessionStart = Date.now();
+
+  /** True only when `d` is a scan that ran during THIS session (not a hydrated
+      cache report). Gates green "all clean" claims — a security tool must not
+      imply safety it verified in a previous session / hours ago. */
+  scannedThisSession(d: Date | null): boolean {
+    return d !== null && d.getTime() >= this.#sessionStart;
+  }
+
   /** Aggregated counts across `records`. */
   severityCounts: SeverityCounts = $derived.by(() => {
     const counts: SeverityCounts = {

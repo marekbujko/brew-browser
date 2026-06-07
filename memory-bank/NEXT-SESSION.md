@@ -1,9 +1,44 @@
 # NEXT-SESSION handoff — read this first
 
-**Date written:** 2026-05-26 (v0.4.0 backend on branch)
+**Date written:** 2026-05-26 (v0.4.0 backend on branch); **top section updated 2026-05-31 (native experiment).**
 **Session lead:** Claude Opus 4.7 [1m] (Claude Code in the terminal) with Michael
 
 Read this first, then `activeContext.md`, then the latest entries in `progress.md`, then specific `tasks/2026-05/*.md` for full detail on what just happened.
+
+---
+
+## ⚗️ CURRENT BRANCH (2026-05-31): native Swift / Liquid Glass rebuild
+
+> **You are likely on `experiment/native-swift-liquid-glass`, not `main`.** If so,
+> the v0.4.0/v0.5.0 release content below describes `main` (the shipped Tauri app)
+> and is background, not the active task.
+
+A faithful **port** of the Tauri interface to native Swift 6 + SwiftUI + Liquid
+Glass (macOS 26 Tahoe), in `native/` as a Swift Package. Port, not redesign — same
+data sources + functionality as the shipped app. **Uncommitted; no commits past
+`main`.**
+
+**Done + building clean** (`cd native && ./build-app.sh debug` → 0 errors):
+Dashboard (parity), package detail inspector (all 14 sections live), Settings
+(9-tab stock `TabView`), data layer (6 services + `LocalPrefs`).
+
+**Next, in priority order:**
+1. **Library panel** — row→detail already wired; add kind pills, sort, filters.
+2. Discover / Trending / Snapshots / Services / Activity panels (placeholders).
+3. Dashboard GitHub "starred N of M" card (needs a batch resolver).
+4. Sparkle for real in-app updates (deferred; auto-check toggle persists, install stub).
+5. Vulns "scan all" from Settings (`VulnsService` has `scanOne` only).
+
+**Build loop:** edit → `cd native && ./build-app.sh debug` → `killall BrewBrowser;
+open native/BrewBrowser.app` → **user takes screenshots** (don't screencapture).
+**Toolchain:** SPM only — full Xcode installed but `xcode-select` → CommandLineTools,
+so no `xcodebuild`; `swift build` links Liquid Glass fine. **Constraint:** stock
+Apple components only, no overrides.
+
+**Docs:** `native/README.md` (build + source map), `decisions.md` (2026-05-30 ADR),
+`techContext.md` ("Native rebuild" section), `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`,
+`progress.md` (2026-05-31), and cross-session memory
+`~/.claude/projects/-Users-michael-Software-brew-browser/memory/project-native-swift-rebuild.md`.
 
 ---
 

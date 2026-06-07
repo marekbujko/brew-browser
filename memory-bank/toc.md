@@ -62,6 +62,7 @@ Project-scoped memory bank. **All agents working on this project read from and w
 - ✅ `scans/YYYY-MM-DD/` for tool-battery snapshots
 - ✅ `security.md` §N appended per release-time audit
 - ✅ Release notes (project-level, not memory-bank) live at `docs/release-notes/<version>.md` — one file per shipped release, fed to `gh release create --notes-file`. Started with v0.3.0.
+- ⚗️ Native rebuild experiment lives in `native/` (branch `experiment/native-swift-liquid-glass`) with its own `native/README.md`; design context in `decisions.md` + `techContext.md` + `tasks/2026-05/21-*`.
 
 ## Project root vs memory-bank
 
@@ -71,6 +72,13 @@ Memory-bank is for **design + decision context** (specs, plans, audits, task rec
 - **`docs/`** holds everything else surfaced to users and contributors: `BUILD.md` (maintainer build flow), `PLAN.md` (full design + phase tracker), `PHILOSOPHY.md` (positioning), plus `release-notes/`, `icon/`, `screenshots/`.
 
 If you're tempted to add a new top-level `.md` at the repo root, put it in `docs/` unless it's required there by a convention.
+
+**Native rebuild experiment (branch `experiment/native-swift-liquid-glass`):** the
+native Swift/SwiftUI/Liquid Glass port lives in `native/` as a Swift Package, with
+its own contributor-facing `native/README.md` (build loop + source map). It's a
+port of the shipped Tauri interface, not a separate product. Design/decision
+context for it lives in the memory bank as usual: `decisions.md` (2026-05-30 ADR),
+`techContext.md` ("Native rebuild" section), and `tasks/2026-05/22-native-swift-liquid-glass-rebuild.md`.
 
 ## Live vs historical entries within memory-bank
 

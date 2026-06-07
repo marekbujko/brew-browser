@@ -100,3 +100,46 @@ Serialize concurrent `brew` invocations using a `tokio::sync::Mutex<()>` in Taur
 - **`brew bundle dump` is slow on large libraries** — needs progress feedback
 - **`brew search` is slow on cold cache** — show loading state, cache for the session
 - **SvelteKit with `adapter-static` requires `ssr=false`** — already configured in `+layout.ts`
+
+## Native rebuild (experimental — branch `experiment/native-swift-liquid-glass`)
+
+A parallel, **fully native** port of the app lives in `native/`. It does **not**
+replace the Tauri stack above — the shipped product stays Tauri on `main`. This
+section documents the native experiment's stack; see `native/README.md` for the
+full source map + build loop, and `decisions.md` (2026-05-30 ADR) for the why.
+
+| Layer | Choice | Version |
+|-------|--------|---------|
+| Language | Swift | 6.3.x |
+| UI | SwiftUI + Liquid Glass (`.glassEffect`, `GlassEffectContainer`, `.buttonStyle(.glass)`, `.backgroundExtensionEffect`) | macOS 26 SDK |
+| Charts | Swift Charts (`SectorMark`, `LineMark`) | (SDK) |
+| Min OS | macOS 26.0 (Tahoe) | — |
+| Build system | Swift Package Manager (`swift build`) — **not** an Xcode project | swift-tools 6.2 |
+| App bundling | `native/build-app.sh` wraps the SPM binary into a launchable `.app` (adds `Info.plist`, copies the `Bundle.module` resource bundle) | — |
+
+**Toolchain note:** full Xcode is installed at `/Applications/Xcode.app`, but
+`xcode-select` points at Command Line Tools, so `xcodebuild` is unavailable from
+the CLI. `swift build` works under CLT and links all Liquid Glass APIs. Build via
+`native/build-app.sh [debug|release]`; `Package.swift` opens directly in Xcode for
+Previews/Run if needed.
+
+**Concurrency model:** `@Observable @MainActor` view models with `static let shared`
+singletons for app state; `actor` types for I/O (`BrewService`, `VulnsService`,
+`GitHubService`, `TrendingHistoryService`) — call sites use `await` inside `Task`.
+
+**Data layer (ported verbatim from the Tauri app):**
+- `settings.json` — same path + schema as the Rust `Settings`; Swift `AppSettings`
+  reads/writes it (atomic write, feature gating ported: paranoid / vuln / github /
+  enhanced-trending / AI features).
+- `UserDefaults` — `LocalPrefs` for view-only prefs (theme, default landing section,
+  confirm-destructive, activity caps).
+- Bundled JSON — `categories.json` (838 KB) + `enrichment.json` (2.8 MB) copied from
+  `src-tauri/data/` into `native/Sources/BrewBrowser/Resources/`, shipped
+  **uncompressed** in the native build (Tauri ships them gzipped).
+- `brew` subprocess — `BrewService` / `VulnsService` actors over `Process`, cwd
+  pinned to `/`, `--json=v2` where available. `VulnsService` replicates all 5
+  `brew vulns` smoke-test gotchas from the Rust impl.
+
+**Not yet ported:** Sparkle-based in-app updates (the Updates tab's auto-check
+toggle persists, but install is a stub). Everything else (trending, GitHub OAuth +
+Keychain, vulnerability scanning, AI enrichment) is ported.

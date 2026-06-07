@@ -1,7 +1,38 @@
 # Active Context
 
-**Date:** 2026-06-02 (Tauri←native parity pass on branch `tauri-parity`)
-**State:** Working on `tauri-parity` (rooted on `main`) — bringing the shipped Tauri app up to the native rebuild's icon + Dashboard-chart treatment, one-prompt Keychain, and the canonical Trending velocity threshold. Parity pass complete + verified (`npm run check` clean, Rust compiles, screenshots confirmed); committed + pushed. Full detail: `tasks/2026-06/01-tauri-native-parity.md`; ADR: `decisions.md#2026-06-02`. Reverse-parity backlog (native←Tauri) in memory `project-native-reverse-parity`. Prior context (v0.5.0 launch) below.
+> ## ⚗️ Active branch: `experiment/native-swift-liquid-glass` (updated 2026-06-06)
+>
+> Off-`main` branch: native Swift 6 + SwiftUI + Liquid Glass (macOS 26) port of
+> the Tauri app, in `native/`. `main` is the shipped Tauri v0.5.0.
+>
+> **STATUS: native is at FULL feature parity with Tauri.** All committed + pushed
+> (`892cbdf`…`e08a377`). The big parity push (bundles A–F: keyboard+⌘K palette,
+> vulnerability surfacing, Sparkle updater, enrichment/Discover, upgrade sheet +
+> GitHub detail, About/toasts/window-state) is DONE — see
+> `tasks/2026-06/09-native-parity-roadmap.md` (roadmap) + `10-*` (polish/Sparkle/
+> rename). The Sparkle/vulns "deferred" items from the old banner are now done.
+>
+> **App is now "Brew Browser"** (both builds; menu bar + Dock). Native version
+> 0.1.0, Tauri 0.5.0 (independent on purpose). Native NOT yet
+> notarized/distributed — that's the deploy step (needs Developer ID +
+> `native/release.sh`).
+>
+> **Open threads → see [[project-resume-state]] (auto-memory):** Tauri-rename
+> release-notes migration line; optional About "Opus 4.7→4.8" + prose
+> capitalization; native notarization for deploy. Two intentional stock
+> divergences remain (detail-pane width not persisted; Activity drawer aria-live).
+>
+> Build loop: `cd native && ./build-app.sh && open native/BrewBrowser.app` (use
+> the .app, NOT Xcode Run / `swift run` — unbundled binary = no Info.plist, and
+> Sparkle stays inert there). Tauri: `npm run check`. Constraint: **stock Apple
+> components only, no overrides.**
+>
+> See `decisions.md` (2026-06-06 deploy-prep entry), `tasks/2026-06/09`+`10`.
+>
+> **Tauri side (now on `main`, merged in):** tauri-parity (#37), live-enrichment
+> pipeline + app (#41/#43), pipeline-rsync (#42), trending tap-tokens (#44), cask
+> manual-install detection (#45), brewfile path-traversal (#46). This branch was
+> synced with `origin/main` on 2026-06-06 ahead of the native→main PR.
 
 ---
 

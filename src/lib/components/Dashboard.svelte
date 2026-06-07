@@ -224,6 +224,10 @@
   let exposureScannedAt = $derived(vulnerabilities.lastScannedAt);
   let exposureSource = $derived(vulnerabilities.source);
   let exposureLoading = $derived(vulnerabilities.loading);
+  /** A confident "all clean" is only honest when the scan ran THIS session. A
+      report hydrated from cache on launch (timestamp predating the session) is
+      stale — show a caution + re-scan prompt instead of a green all-clear. */
+  let exposureFresh = $derived(vulnerabilities.scannedThisSession(exposureScannedAt));
 
   /** Same RelativeTimeFormat as the Settings card — same UX language. */
   const EXPOSURE_RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
@@ -909,7 +913,7 @@
           <div class="card-head">
             <h2>
               <span class="exp-card-icon">
-                {#if exposureScannedAt && exposureCounts.vulnerablePackages === 0}
+                {#if exposureFresh && exposureCounts.vulnerablePackages === 0}
                   <ShieldCheck size={16} />
                 {:else}
                   <ShieldAlert size={16} />
@@ -936,13 +940,33 @@
           </div>
           <div class="exp-body">
             {#if !exposureScannedAt}
-              <!-- Never scanned: gentle CTA, not a warning. -->
-              <p class="exp-cta">
-                Scan installed packages for known vulnerabilities using
-                <code>brew vulns</code> and OSV.dev.
-              </p>
+              <!-- Never scanned: a HAZARD, not a gentle suggestion. We must not
+                   imply safety we haven't verified. -->
+              <div class="exp-clean exp-warn">
+                <AlertCircle size={20} class="exp-warn-icon" />
+                <div>
+                  <strong>Not scanned yet.</strong>
+                  <p class="text-muted exp-sub">
+                    We haven't checked your installed packages for known
+                    vulnerabilities. Run a scan when you can. (Configured in
+                    Settings → Vulnerability Scanning.)
+                  </p>
+                </div>
+              </div>
+            {:else if exposureCounts.vulnerablePackages === 0 && !exposureFresh}
+              <!-- Clean LAST scan, but the report is stale (cached / served on
+                   launch). Don't claim all-clear — caution + re-scan prompt. -->
+              <div class="exp-clean exp-warn">
+                <AlertCircle size={20} class="exp-warn-icon" />
+                <div>
+                  <strong>No advisories as of the last scan ({exposureLastLabel}).</strong>
+                  <p class="text-muted exp-sub">
+                    Packages may have changed since. Re-scan to confirm.
+                  </p>
+                </div>
+              </div>
             {:else if exposureCounts.vulnerablePackages === 0}
-              <!-- Clean. This is a GOOD result — frame it positively. -->
+              <!-- Freshly clean. This is a GOOD result — frame it positively. -->
               <div class="exp-clean">
                 <CheckCircle2 size={20} />
                 <div>
@@ -1460,20 +1484,6 @@
     flex-direction: column;
     gap: var(--space-3);
   }
-  .exp-cta {
-    font-size: var(--text-body-sm);
-    color: var(--color-text-secondary);
-    line-height: var(--lh-snug);
-    margin: 0;
-  }
-  .exp-cta code {
-    font-family: var(--font-mono);
-    font-size: var(--text-mono);
-    padding: 1px 4px;
-    background: var(--color-surface-sunken);
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
-  }
   .exp-clean {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -1484,6 +1494,13 @@
     border-radius: var(--radius-md);
     color: var(--color-success-on-subtle);
   }
+  /* Never-scanned + stale-clean states reuse the .exp-clean layout but warn
+     (amber), since a security tool must not imply safety it hasn't verified. */
+  .exp-warn {
+    background: var(--color-warning-subtle);
+    color: var(--color-warning-on-subtle);
+  }
+  .exp-warn :global(.exp-warn-icon) { color: var(--color-warning-on-subtle); }
   .exp-clean strong {
     display: block;
     color: var(--color-success-on-subtle);

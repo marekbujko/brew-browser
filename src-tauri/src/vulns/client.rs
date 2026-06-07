@@ -319,7 +319,14 @@ pub async fn scan_one(brew: &Path, formula: &str) -> Result<Vec<RawVuln>, BrewEr
     )
     .await?;
     let results = parse_scan_output(&raw, &display)?;
-    Ok(results.into_iter().flat_map(|r| r.vulnerabilities).collect())
+    // brew vulns IGNORES --formula and returns the WHOLE install set, so keep
+    // only the requested formula's record — otherwise the detail card shows
+    // every other package's CVEs (boost/icu/jxl/…) under this one.
+    Ok(results
+        .into_iter()
+        .find(|r| r.formula == formula)
+        .map(|r| r.vulnerabilities)
+        .unwrap_or_default())
 }
 
 /// Install `brew vulns` via `brew install homebrew/brew-vulns/brew-vulns`.

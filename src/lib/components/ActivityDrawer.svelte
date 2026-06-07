@@ -212,33 +212,10 @@
     </header>
 
     {#if !ui.drawerMinimized}
-      {#if activity.jobs.length > 1}
-        <div class="tabs" role="tablist" aria-label="Job tabs">
-          {#each activity.jobs as j (j.jobId)}
-            <div class="tab" class:on={activeJob?.jobId === j.jobId}>
-              <button
-                role="tab"
-                aria-selected={activeJob?.jobId === j.jobId}
-                class="tab-main"
-                onclick={() => activity.setActive(j.jobId)}
-                title={j.label}
-              >
-                {#if j.status === "running"}<span class="dot run"></span>{/if}
-                {#if j.status === "succeeded"}<span class="dot ok"></span>{/if}
-                {#if j.status === "failed"}<span class="dot fail"></span>{/if}
-                {#if j.status === "canceled"}<span class="dot dim"></span>{/if}
-                <span class="truncate">{j.label}</span>
-              </button>
-              <button
-                type="button"
-                class="x"
-                aria-label={`Close ${j.label} tab`}
-                onclick={() => activity.removeJob(j.jobId)}
-              >×</button>
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <!-- No job tabs: the drawer shows the running job (live) or whichever job
+           you pick in the Activity panel. The panel is the single place to
+           switch and to remove entries — a tab strip becomes unusable once a
+           handful of jobs accumulate. -->
 
       <!-- aria-live flips between "polite" (slow streams) and "off" (high-volume
            install surges) — see §N4. A separate sr-only completion line below
@@ -331,51 +308,6 @@
   }
   .ctl:hover { background: var(--color-surface-sunken); color: var(--color-text-primary); }
 
-  .tabs {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-1) var(--space-3);
-    background: var(--color-surface-raised);
-    border-bottom: 1px solid var(--color-border);
-    overflow-x: auto;
-  }
-  .tab {
-    display: inline-flex;
-    align-items: center;
-    border-radius: var(--radius-sm);
-    color: var(--color-text-secondary);
-    font-size: var(--text-caption);
-    max-width: 220px;
-  }
-  .tab.on { background: var(--color-surface-sunken); color: var(--color-text-primary); }
-  .tab-main {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: 2px var(--space-2);
-    color: inherit;
-    max-width: 200px;
-  }
-  .tabs .truncate { max-width: 140px; }
-  .tabs .x {
-    color: var(--color-text-muted);
-    padding: 0 4px;
-    font-size: 14px;
-    line-height: 1;
-  }
-  .tabs .x:hover { color: var(--color-text-primary); }
-
-  .dot {
-    display: inline-block;
-    width: 6px; height: 6px;
-    border-radius: var(--radius-full);
-  }
-  .dot.run  { background: var(--color-warning); }
-  .dot.ok   { background: var(--color-success); }
-  .dot.fail { background: var(--color-danger); }
-  .dot.dim  { background: var(--color-text-muted); }
 
   .console {
     flex: 1;

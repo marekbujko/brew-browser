@@ -7,9 +7,14 @@
 //! an uninstalled cask, so we walk a small, polite cascade against the
 //! cask's published homepage:
 //!
+//!   0. Appcasks — `github.com/App-Fair/appcasks/releases/download/
+//!      cask-<token>/AppIcon.png` (community-curated real app icons; the
+//!      source Applite / App Fair use). Tried first — best quality, no crawl.
 //!   1. `<scheme>://<host>/apple-touch-icon.png` (Apple-blessed convention)
 //!   2. `<meta property="og:image">` from the homepage HTML
 //!   3. `<scheme>://<host>/favicon.ico`
+//!   4. Google favicon service — `google.com/s2/favicons?domain=<host>`
+//!      (near-universal fallback for the long tail).
 //!
 //! First 2xx + `image/*` content-type wins. We normalize whatever we get
 //! to a 64×64 PNG via macOS-native `sips` (same as `cask_icon`) and
@@ -226,6 +231,20 @@ pub async fn cask_icon_from_homepage(
     };
 
     // Walk the cascade. First success short-circuits.
+    //
+    // Step 0 (parity with the native Swift IconService, 2026-06-01): Appcasks —
+    // the community-curated icon repo Applite/App Fair use. A real, high-quality
+    // app icon when the cask's dev opted in. Predictable github.com release-asset
+    // URL (no homepage crawl), so it's tried first. github.com is already a
+    // public host, so no extra SSRF surface. Coverage is sparse → the homepage
+    // cascade + Google favicon below cover the long tail.
+    if let Some(bytes) = probe_appcasks(&client, &token).await {
+        if write_and_normalize(&bytes, &cache_path).await.is_ok() {
+            clear_miss_marker(&miss_path).await;
+            return encode_png_as_data_url(&cache_path).await.map(Some);
+        }
+    }
+
     if let Some(bytes) = probe_apple_touch_icon(&client, &parsed).await {
         if write_and_normalize(&bytes, &cache_path).await.is_ok() {
             clear_miss_marker(&miss_path).await;
@@ -247,6 +266,16 @@ pub async fn cask_icon_from_homepage(
         }
     }
 
+    // Final step (parity with native IconService): Google's favicon service.
+    // One clean URL for any domain, no HTML scrape — near-universal coverage
+    // for the long tail the homepage probes miss. google.com is a public host.
+    if let Some(bytes) = probe_google_favicon(&client, &parsed).await {
+        if write_and_normalize(&bytes, &cache_path).await.is_ok() {
+            clear_miss_marker(&miss_path).await;
+            return encode_png_as_data_url(&cache_path).await.map(Some);
+        }
+    }
+
     // All probes failed → sticky null so we don't re-probe for 7 days.
     touch_miss_marker(&miss_path).await;
     Ok(None)
@@ -261,10 +290,8 @@ pub async fn cask_icon_from_homepage(
 struct ParsedUrl {
     /// Always "http" or "https" — lowercased.
     scheme: String,
-    /// Host portion (no port). Kept for diagnostics / future logging;
-    /// not currently used in any probe URL construction (the `origin`
-    /// field already encodes the host + port).
-    #[allow(dead_code)]
+    /// Host portion (no port). Used by the Google-favicon probe (which keys
+    /// off the bare domain) and kept for diagnostics.
     host: String,
     /// `<scheme>://<authority>` — the base for absolute path joins
     /// (apple-touch-icon, favicon). Includes any port the homepage used.
@@ -494,6 +521,34 @@ fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
 fn looks_like_image_content_type(value: &str) -> bool {
     let v = value.trim().to_lowercase();
     v.starts_with("image/")
+}
+
+// ---------- Probe: Appcasks (community icon repo) ----------
+
+/// Base URL for App Fair's `appcasks` icon repository — the source Applite and
+/// App Fair use. Each cask's icon is a release asset tagged `cask-<token>` with
+/// filename `AppIcon.png`. Org is `App-Fair` (capital, hyphen), verified live.
+const APPCASKS_BASE: &str =
+    "https://github.com/App-Fair/appcasks/releases/download";
+
+async fn probe_appcasks(client: &reqwest::Client, token: &str) -> Option<Vec<u8>> {
+    // token is already `validate_cask_token`-checked by the caller, so it's safe
+    // to interpolate into the URL (no path-escape / scheme-injection risk).
+    let target = format!("{}/cask-{}/AppIcon.png", APPCASKS_BASE, token);
+    fetch_image_bytes(client, &target).await
+}
+
+// ---------- Probe: Google favicon service ----------
+
+/// Google's public favicon service — returns a PNG for any domain, sized to the
+/// requested px. Universal fallback for casks whose homepage exposes no usable
+/// icon. Uses the bare host from the (already SSRF-validated) homepage.
+async fn probe_google_favicon(client: &reqwest::Client, url: &ParsedUrl) -> Option<Vec<u8>> {
+    let target = format!(
+        "https://www.google.com/s2/favicons?domain={}&sz={}",
+        url.host, ICON_PIXELS
+    );
+    fetch_image_bytes(client, &target).await
 }
 
 // ---------- Probe: apple-touch-icon ----------
@@ -1167,6 +1222,33 @@ mod tests {
         assert_eq!(
             join_absolute("https://example.com:8443", "/a.png"),
             "https://example.com:8443/a.png"
+        );
+    }
+
+    // ---------- new-source URL construction (Appcasks + Google favicon) ----------
+
+    #[test]
+    fn appcasks_url_uses_app_fair_org_and_cask_prefix() {
+        // Pins the exact verified-live shape: org `App-Fair`, `cask-<token>`
+        // release tag, `AppIcon.png` asset. A regression here = broken icons.
+        let token = "iterm2";
+        let url = format!("{}/cask-{}/AppIcon.png", APPCASKS_BASE, token);
+        assert_eq!(
+            url,
+            "https://github.com/App-Fair/appcasks/releases/download/cask-iterm2/AppIcon.png"
+        );
+    }
+
+    #[test]
+    fn google_favicon_url_keys_off_bare_host_and_size() {
+        let p = parse_http_url("https://slack.com/foo/bar").expect("parse");
+        let url = format!(
+            "https://www.google.com/s2/favicons?domain={}&sz={}",
+            p.host, ICON_PIXELS
+        );
+        assert_eq!(
+            url,
+            "https://www.google.com/s2/favicons?domain=slack.com&sz=64"
         );
     }
 
