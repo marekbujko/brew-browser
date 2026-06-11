@@ -63,7 +63,7 @@ pub fn run() {
         )
         .try_init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         // Phase 15 — register the updater plugin. The endpoint URL and
@@ -79,9 +79,22 @@ pub fn run() {
         // on exit, then restores it on the next launch. Default StateFlags
         // cover size + position (plus maximized/fullscreen) — exactly what the
         // issue asks for. No frontend wiring: registration is the feature.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build());
+
+    // The native menu is macOS-idiomatic: on macOS it populates the
+    // global menu bar at the top of the screen. On Linux/GTK there is
+    // no global menu bar, so Tauri renders it as an in-window GTK
+    // MenuBar strip — redundant (every action is reachable from the
+    // in-app UI) and it clashes with the transparent-window config
+    // (the strip paints see-through). Gate it to macOS so Linux gets a
+    // clean chromeless window. Discovered during the v0.6.0 Linux
+    // bring-up.
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .menu(build_app_menu)
-        .on_menu_event(handle_menu_event)
+        .on_menu_event(handle_menu_event);
+
+    builder
         .setup(|app| {
             state::initialize(app)?;
             // Phase 15 — spawn the auto-check scheduler. The task
@@ -114,6 +127,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             brew_doctor,
+            system_status,
+            brew_redetect,
+            open_terminal_install,
             brew_get_analytics,
             brew_set_analytics,
             brew_list,

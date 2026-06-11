@@ -110,7 +110,11 @@ struct BrewService: Sendable {
 
     /// Resolve the brew binary the same way the Rust backend does: prefer the
     /// Apple-Silicon prefix, fall back to the Intel path, then bare PATH lookup.
-    private static func resolveBrewPath() -> String? {
+    /// Internal (not private) — the single source of truth for "is Homebrew
+    /// installed?": `VulnsService` resolves through it, and `AppModel`'s
+    /// missing-Homebrew onboarding gate polls it. Returns nil when no install
+    /// is found; callers must surface that, never substitute a fake path.
+    static func resolveBrewPath() -> String? {
         let candidates = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
         for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
             return c

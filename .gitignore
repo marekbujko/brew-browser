@@ -65,3 +65,11 @@ __pycache__/
 
 # Icon previews — regenerable from docs/icon/brew-browser.svg via qlmanage
 docs/icon/preview-*.png
+
+# Build artifacts (never commit binaries)
+*.AppImage
+*.deb
+*.rpm
+*.dmg
+*.app.tar.gz
+*.app.tar.gz.sig

@@ -31,7 +31,7 @@ Homebrew is the standard package manager on macOS. brew-browser gives it a real 
 
 ## Features
 
-- **Dashboard** — your Homebrew setup at a glance: installed count, updates available, brew version, formula/cask split, top-categories donut chart, storage usage (Cellar / Caskroom / var/log / cache) with one-click "Reveal in Finder", and an opt-in **Exposure** card surfacing known vulnerabilities across your install
+- **Dashboard** — your Homebrew setup at a glance: installed count, updates available, brew version, formula/cask split, top-categories donut chart, storage usage (Cellar / Caskroom / var/log / cache) with one-click "Reveal in Finder" (macOS) / "Show in file manager" (Linux), and an opt-in **Exposure** card surfacing known vulnerabilities across your install
 - **Library** — every installed formula and cask in one dense, filterable list, with outdated badges, sortable columns, category chip filters, an opt-in **Vulnerable** filter pill, inline severity dots, and a slide-over detail panel
 - **Discover** — search the full Homebrew catalog (15,974 packages, bundled at build time + user-refreshable) by name or browse via the 19-category tile grid; multi-select chip filter
 - **Trending** — top packages from Homebrew's published `formulae.brew.sh` analytics, with 30 / 90 / 365-day windows, sortable columns, a **velocity index** (recent-month vs prior-11-month adoption signal), and opt-in per-package install-trend sparklines
@@ -72,11 +72,20 @@ and parity rules: `memory-bank/decisions.md` (2026-06-01 "keep both" ADR).
 
 ## Install (end users)
 
-Both builds ship on the **[latest release](https://github.com/msitarzewski/brew-browser/releases/latest)**, signed + notarized — no Gatekeeper warning. Apple Silicon.
+Both macOS builds ship on the **[latest release](https://github.com/msitarzewski/brew-browser/releases/latest)**, signed + notarized — no Gatekeeper warning.
+
+### Which download?
+
+| Your machine | Grab |
+|----------|------|
+| Apple Silicon (M-series), macOS 13+ | `brew-browser_<version>_aarch64.dmg` |
+| Intel, macOS 13+ | `brew-browser_<version>_x64.dmg` |
+| macOS 26 (Tahoe), native build | `BrewBrowser-<version>-arm64.dmg` (M-series) or `BrewBrowser-<version>-x86_64.dmg` (Intel) |
+| Linux (Ubuntu 22.04+ era) | `.deb` / `.rpm` / `.AppImage` from the release, or the latest [Linux Build workflow run](https://github.com/msitarzewski/brew-browser/actions/workflows/linux-build.yml) |
 
 ### Tauri build — macOS 13+ (the cross-platform one)
 
-**Direct download:** grab **`brew-browser_<version>_aarch64.dmg`** from the [latest release](https://github.com/msitarzewski/brew-browser/releases/latest), open it, and drag **brew-browser** to Applications. Keeps you on the app's own verified updater (Settings → Network → Updates).
+**Direct download:** grab the `.dmg` for your Mac — **`brew-browser_<version>_aarch64.dmg`** (Apple Silicon) or **`brew-browser_<version>_x64.dmg`** (Intel) — from the [latest release](https://github.com/msitarzewski/brew-browser/releases/latest), open it, and drag **brew-browser** to Applications. Keeps you on the app's own verified updater (Settings → Network → Updates).
 
 **Homebrew:**
 
@@ -87,27 +96,42 @@ brew install --cask brew-browser
 
 Installs the same notarized `.dmg`; update later with `brew upgrade --cask brew-browser`.
 
+### Tauri build — Linux (newly supported)
+
+Linux bundles are produced by CI as `.deb`, `.rpm`, and `.AppImage`. For tagged releases, grab the `.deb` or `.AppImage` from the [releases page](https://github.com/msitarzewski/brew-browser/releases/latest); for the latest development build, download the artifacts from the most recent [Linux Build workflow run](https://github.com/msitarzewski/brew-browser/actions/workflows/linux-build.yml). Targets Ubuntu 22.04+ (the webkit2gtk-4.1 ABI) and equivalently-recent distros. Two things to know up front:
+
+- **Linux artifacts are currently unsigned.** The AppImage ships unsigned by convention; `.deb` / `.rpm` GPG signing is a documented future step. There is no Gatekeeper/notarization equivalent to satisfy, but you are running an unsigned binary — verify your download against the release checksums.
+- **GitHub sign-in needs a Secret Service daemon.** The optional GitHub integration stores its token in your system keyring via the Secret Service API (gnome-keyring, KWallet). On a desktop session this is already running; on a headless box or a minimal window manager without a Secret Service provider, GitHub sign-in fails with a "keyring unavailable" message. Everything else — browse, search, install, snapshot, services, vulnerability scanning — works regardless.
+
 ### Native build — macOS 26 (Tahoe) · Swift / SwiftUI
 
-**Direct download:** grab **`BrewBrowser-<version>.dmg`** from the [latest release](https://github.com/msitarzewski/brew-browser/releases/latest), open it, and drag **Brew Browser** to Applications. It keeps itself current via the in-app Sparkle updater. (Requires macOS 26.)
+**Direct download:** grab the `.dmg` for your Mac — **`BrewBrowser-<version>-arm64.dmg`** (Apple Silicon) or **`BrewBrowser-<version>-x86_64.dmg`** (Intel) — from the [latest release](https://github.com/msitarzewski/brew-browser/releases/latest), open it, and drag **Brew Browser** to Applications. It keeps itself current via the in-app Sparkle updater. (Requires macOS 26.)
 
 ## Build from source
 
-Prereqs:
+Prereqs (all platforms):
 
 - [Rust](https://rustup.rs/) (stable, edition 2021+)
 - [Node.js 22+](https://nodejs.org/) and npm
 - [Homebrew](https://brew.sh/) itself
-- Xcode Command Line Tools: `xcode-select --install`
 
-Then:
+Platform build prereqs:
+
+- **macOS** — Xcode Command Line Tools: `xcode-select --install`
+- **Linux** — the Tauri 2 GTK/WebKit build dependencies (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `patchelf`, plus `build-essential`). The canonical, always-current apt recipe lives in the CI workflow at [`.github/workflows/linux-build.yml`](./.github/workflows/linux-build.yml) — copy the `apt-get install` block from there rather than maintaining a second list here.
+
+Then (same command on every platform):
 
 ```sh
 git clone https://github.com/msitarzewski/brew-browser
 cd brew-browser
 npm install
 npm run tauri dev      # development with HMR
-npm run tauri build    # produces a .dmg in src-tauri/target/release/bundle/
+npm run tauri build    # macOS: .dmg · Linux: .deb / .rpm / .AppImage, all under src-tauri/target/release/bundle/
+
+# Intel .dmg (artifacts named _x64, under src-tauri/target/x86_64-apple-darwin/release/bundle/):
+rustup target add x86_64-apple-darwin   # one-time
+npm run tauri build -- --target x86_64-apple-darwin
 ```
 
 ### Native build (macOS 26)
@@ -126,7 +150,7 @@ swift test                  # unit tests
 
 ## Architecture
 
-**Tauri build:** a Tauri 2 shell hosts a SvelteKit + Svelte 5 frontend in the system WebView. A Rust backend exposes ~55 typed Tauri commands that shell out to `brew` via `tokio::process` and stream stdout/stderr back over typed IPC channels. The full Homebrew catalog is bundled at build time (~6 MiB gzipped) and refreshable on demand. Trending data comes straight from `formulae.brew.sh`'s public analytics JSON, cached in memory for an hour. Optional GitHub integration uses OAuth Device Flow with the token stored only in the macOS Keychain. No shell plugin, no arbitrary command execution — every `brew` invocation is built in Rust from a small set of enumerated inputs. See [docs/PLAN.md](./docs/PLAN.md) for the full design and [memory-bank/backendApi.md](./memory-bank/backendApi.md) for the complete IPC surface.
+**Tauri build:** a Tauri 2 shell hosts a SvelteKit + Svelte 5 frontend in the system WebView. macOS is the primary target; Linux is newly supported (same codebase, built on Ubuntu 22.04+ via CI). A Rust backend exposes ~55 typed Tauri commands that shell out to `brew` via `tokio::process` and stream stdout/stderr back over typed IPC channels. Paths are derived from `brew --prefix` / `brew --cache` rather than hardcoded, so the Linuxbrew prefix (`/home/linuxbrew/.linuxbrew`, or `~/.linuxbrew`) is picked up automatically alongside the macOS `/opt/homebrew`. The full Homebrew catalog is bundled at build time (~6 MiB gzipped) and refreshable on demand. Trending data comes straight from `formulae.brew.sh`'s public analytics JSON, cached in memory for an hour. Optional GitHub integration uses OAuth Device Flow with the token stored only in the system keyring (macOS Keychain; Secret Service / gnome-keyring / KWallet on Linux). No shell plugin, no arbitrary command execution — every `brew` invocation is built in Rust from a small set of enumerated inputs. See [docs/PLAN.md](./docs/PLAN.md) for the full design and [memory-bank/backendApi.md](./memory-bank/backendApi.md) for the complete IPC surface.
 
 **Native build:** a Swift 6 + SwiftUI app (`native/`, a Swift Package — no `.xcodeproj`). Stock Apple scaffolding only — `NavigationSplitView`, `.inspector`, `Settings`/`SettingsLink`, `Form`, Liquid Glass materials — no custom window chrome. Stateless services (`BrewService`, `GitHubService`, `VulnsService`) are `Sendable struct`s that mirror the Rust modules and shell out to `brew` via `Foundation.Process` with typed argument arrays (no shell). The same bundled JSON data contract; settings persist to the same `settings.json` schema; updates via Sparkle 2. See `native/README.md`.
 
@@ -140,11 +164,11 @@ brew-browser makes outbound network calls in exactly twelve documented circumsta
 - **`https://formulae.brew.sh/api/{formula,cask}.json`** — the full Homebrew catalog. Bundled at build time so the app works offline. A user-initiated **Refresh** button on the Dashboard (or the Discover stale-catalog banner) writes a fresh copy to `~/Library/Application Support/brew-browser/catalog/`. Auto-refresh is **off** by default; Settings → Network offers weekly / daily opt-in.
 - **Cask homepage probes** — when the Discover or Trending tab renders an uninstalled cask that has a `homepage` field, the Rust backend probes that homepage for an icon (in order: `/apple-touch-icon.png`, `<meta og:image>` parsed from the homepage HTML, `/favicon.ico`). One probe per cask per week max — the result, including misses, is cached for 7 days. These probes are sandboxed: link-local, loopback, RFC1918, and cloud-metadata IPs are rejected before the request, and the same check runs again on every redirect hop to prevent SSRF. Settings → Network can scope this to **installed only** or disable it entirely.
 - **`https://api.github.com/repos/{owner}/{repo}`** (read) — optional, **off by default**. When **Settings → GitHub → "Show GitHub stats on package pages"** is on, the PackageDetail panel fetches public repo metadata (stars, forks, last release date, archived state) for packages whose homepage (or `urls.stable.url` / `urls.head.url` / cask `url`) parses as a GitHub URL. The URL parser strictly allowlists `github.com` (rejects `gist.`, `raw.githubusercontent.`, suffix-attack domains, path traversal). Results cached to `~/Library/Application Support/brew-browser/github-cache/` for 24 hours. Anonymous rate limit is 60 reqs/hr per IP; sign-in lifts it to 5,000/hr.
-- **`https://github.com/login/{device,oauth}/*`** — optional, only when you click **Sign in with GitHub** in Settings (or hit the inline Re-authorize button on a scope-required toast). Uses OAuth Device Flow (RFC 8628): you see a user code, open `github.com/login/device` in your browser, paste it, done. No embedded webview, no client secret, no callback URL. Scopes requested: `read:user` + `public_repo` + `notifications` (the minimum for username + star + file-issue + watch). Access token stored exclusively in **macOS Keychain** under `com.zerologic.brew-browser/github_access_token`. **The token is never returned to the frontend, never written to disk, and never logged** — verified by unit tests.
+- **`https://github.com/login/{device,oauth}/*`** — optional, only when you click **Sign in with GitHub** in Settings (or hit the inline Re-authorize button on a scope-required toast). Uses OAuth Device Flow (RFC 8628): you see a user code, open `github.com/login/device` in your browser, paste it, done. No embedded webview, no client secret, no callback URL. Scopes requested: `read:user` + `public_repo` + `notifications` (the minimum for username + star + file-issue + watch). Access token stored exclusively in the OS credential store under `com.zerologic.brew-browser/github_access_token` — the **macOS Keychain** on macOS, the **Secret Service** (gnome-keyring / KWallet, persistent across reboot) on Linux. On a Linux session with no Secret Service daemon, sign-in fails with a "keyring unavailable" message and the rest of the app is unaffected. **The token is never returned to the frontend, never written to disk by us, and never logged** — verified by unit tests.
 - **`https://api.github.com/{user/starred,repos/.../subscription,repos/.../issues}`** (write) — optional, only when you click Star, Watch, or File-issue on a package detail page after signing in. Each action is gated server-side by a per-action OAuth scope check (`public_repo` for star + file-issue; `notifications` for watch/unwatch) so a token missing the right scope fails fast with a typed `scope_required` error before any GitHub round-trip.
 - **`brew` itself** — every install, uninstall, upgrade, search, and snapshot shells out to the real `brew` CLI. Whatever network calls `brew` makes (GitHub, OCI registries, bottle mirrors) happen exactly as they would if you ran the command yourself in a terminal. The full stdout/stderr stream is visible in the Activity drawer.
 - **Your default browser** — when you click the homepage button on a package, the URL is opened in your default browser via macOS `open(1)`. The app rejects any non-`http(s)` scheme before opening.
-- **`https://brew-browser.zerologic.com/updater.json`** + **`https://github.com/msitarzewski/brew-browser/releases/download/v*/brew-browser_*_aarch64.app.tar.gz`** — the in-app updater (Phase 15, v0.3.0+). The manifest fetch happens when you click **Check for updates now** in Settings → Network → Updates, or on the auto-check timer if you opt in (off by default; 24h cadence). The artifact download follows only after the manifest's `version` is strictly greater than the running build. Every downloaded `.app.tar.gz` is verified against an embedded minisign public key + the manifest's `sha256` before any on-disk side effect — mismatch aborts with no install. Skipping a version is recorded locally; a future release re-triggers the indicator.
+- **`https://brew-browser.zerologic.com/updater.json`** + **`https://github.com/msitarzewski/brew-browser/releases/download/v*/brew-browser_*_{aarch64,x64}.app.tar.gz`** — the in-app updater (Phase 15, v0.3.0+). The manifest fetch happens when you click **Check for updates now** in Settings → Network → Updates, or on the auto-check timer if you opt in (off by default; 24h cadence). The artifact download follows only after the manifest's `version` is strictly greater than the running build. Every downloaded `.app.tar.gz` is verified against an embedded minisign public key + the manifest's `sha256` before any on-disk side effect — mismatch aborts with no install. Skipping a version is recorded locally; a future release re-triggers the indicator.
 - **`https://brew-browser.zerologic.com/trending-history/*`** — Enhanced Trending History (v0.4.0+). **Distinct trust boundary** from the Homebrew first-party endpoints above: this endpoint is operated by the brew-browser project, not by upstream Homebrew. **Off by default.** When you opt in via Settings → Network → Enhanced Trending History, the app fetches per-package historical install trends to power inline sparklines on the Trending tab and a chart on each package's detail panel. Only the package name you're viewing is sent (one HTTP GET per package); no IP is logged at the server, no cookies, no fingerprinting (see `memory-bank/security.md` §16 for the Caddy config that makes the privacy claim auditable). Master Offline Mode hard-locks this off regardless of the per-feature toggle.
 - **`https://brew-browser.zerologic.com/enrichment/*`** — Live category & description updates. **Same first-party host as Enhanced Trending, distinct `/enrichment/*` path** — still a separate trust boundary from the always-on Homebrew endpoints. **Off by default.** brew-browser ships with bundled AI categories + descriptions; when you opt in via Settings → Network → Live category & description updates, it refreshes them: a tiny `version.json` probe on catalog refresh, the full `categories.json` when its version is newer, and a per-package `entry/<token>.json` when you open that package's detail. Only the package name you're viewing is sent (one HTTP GET per token); no IP logged, no cookies. Requires AI Features on; master Offline Mode hard-locks it off regardless.
 - **`https://api.osv.dev`** + **`https://github.com` / `https://gitlab.com` / `https://codeberg.org`** (via subprocess) + **`https://api.github.com/advisories/{GHSA_ID}`** (from our code) — opt-in **Vulnerability Scanning** (v0.5.0+). **Distinct trust boundary** because the OSV traffic and the source-forge tag resolution are opened by the `brew vulns` subprocess we shell out to, not by brew-browser's own binary. **Off by default.** When you opt in via Settings → Network → Vulnerability Scanning (and install `brew vulns` via the one-click affordance if you don't already have it), the app runs `brew vulns --json` to query OSV.dev for known CVEs against your installed formulae. When **both** the vulnerability-scanning toggle AND GitHub sign-in are on, each `GHSA-…`-prefixed finding is enriched via `api.github.com/advisories/{GHSA_ID}` from our Rust code (triple-defense: master Offline Mode, vuln-feature toggle, GitHub-feature toggle — all three must align for one GHSA request). `brew vulns` is published by Homebrew (`Homebrew/homebrew-brew-vulns`, by Andrew Nesbitt). Casks are not supported (`brew vulns` is formula-only); cask UI rows render an honest "Cask coverage isn't supported" message rather than fake clean state. Master Offline Mode hard-locks the whole feature off regardless. See `memory-bank/security.md` §17 for the endpoint audit and gate-composition table.
@@ -234,7 +258,7 @@ Contributions welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the dev loop
 
 ## Built with
 
-Built with **[Agency Agents](https://github.com/msitarzewski/agency-agents)**, by the creator of Agency Agents — the multi-agent toolkit (Backend Architect, Frontend Developer, Security Engineer, Code Reviewer, Technical Writer, and friends) that orchestrated brew-browser's design and implementation. Powered by Claude Code in the terminal, running Opus 4.7 [1m].
+Built with **[Agency Agents](https://github.com/msitarzewski/agency-agents)**, by the creator of Agency Agents — the multi-agent toolkit (Backend Architect, Frontend Developer, Security Engineer, Code Reviewer, Technical Writer, and friends) that orchestrated brew-browser's design and implementation. Powered by Claude Code in the terminal, running Opus 4.8 (1M context).
 
 ## Support the project
 

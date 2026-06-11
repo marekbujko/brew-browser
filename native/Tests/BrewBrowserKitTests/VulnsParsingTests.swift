@@ -87,3 +87,35 @@ struct VulnsParseTests {
         }
     }
 }
+
+@Suite("VulnsService brew resolution")
+struct VulnsResolutionTests {
+    // The regression we guard: a failed resolution used to be papered over
+    // with a hardcoded "/opt/homebrew/bin/brew". The default init must carry
+    // exactly what the shared resolver returns — including nil.
+    @Test func defaultInitNeverFabricatesAPath() {
+        #expect(VulnsService().brewPath == BrewService.resolveBrewPath())
+    }
+
+    @Test func nilBrewPathSurfacesBrewNotFound() async {
+        let service = VulnsService(brewPath: nil)
+        do {
+            _ = try await service.scanOne(name: "wget", isCask: false)
+            Issue.record("scanOne should throw .brewNotFound when no brew path resolved")
+        } catch let error as VulnsServiceError {
+            guard case .brewNotFound = error else {
+                Issue.record("expected .brewNotFound, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("expected VulnsServiceError.brewNotFound, got \(error)")
+        }
+    }
+
+    @Test func nilBrewPathReportsHelperNotInstalled() async {
+        // The install probe is best-effort (`try?`) — with no brew it must
+        // report not-installed, never crash or pretend a probe ran.
+        let service = VulnsService(brewPath: nil)
+        #expect(await service.isBrewVulnsInstalled() == false)
+    }
+}

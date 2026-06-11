@@ -26,6 +26,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
 
   import { settings } from "$lib/stores/settings.svelte";
+  import { isLinux } from "$lib/util/platform";
   import SettingsSectionUpdates from "$lib/components/SettingsSectionUpdates.svelte";
   import SettingsSectionTrendingHistory from "$lib/components/SettingsSectionTrendingHistory.svelte";
   import SettingsSectionLiveEnrichment from "$lib/components/SettingsSectionLiveEnrichment.svelte";
@@ -37,10 +38,11 @@
 
   /** Tooltip + accessible-description copy for the Offline Mode toggle
       (Phase 15 plan §11 item 13). Centralised in one constant so the
-      `title` attribute and the on-screen hint stay in sync. */
+      `title` attribute and the on-screen hint stay in sync. Linux: casks
+      (and therefore cask icon probes) don't exist — the phrase is dropped. */
   const OFFLINE_MODE_DESCRIPTION =
     "Blocks every outbound network call: catalog refresh, Trending fetch, " +
-    "GitHub stats, GitHub sign-in, cask icon homepage probes, update checks. " +
+    `GitHub stats, GitHub sign-in, ${isLinux ? "" : "cask icon homepage probes, "}update checks. ` +
     "All UI that depends on the network shows a 'disabled by Offline Mode' " +
     "notice. brew itself still runs normally — its network access is the " +
     "user's call at the terminal.";
@@ -110,21 +112,28 @@
         allowed: !paranoid,
       },
       {
-        label: "formulae.brew.sh/api/{formula,cask}.json",
+        // Linux: the backend only fetches formula.json (no casks there).
+        label: isLinux
+          ? "formulae.brew.sh/api/formula.json"
+          : "formulae.brew.sh/api/{formula,cask}.json",
         desc: `Catalog refresh — ${s.catalogAutoRefresh === "off"
           ? "manual only"
           : `scheduled (${s.catalogAutoRefresh})`}.`,
         allowed: !paranoid,
       },
-      {
-        label: "Cask homepage probes",
-        desc: `Uninstalled-cask icon cascade — ${
-          s.caskIconMode === "off" ? "disabled" :
-          s.caskIconMode === "installed-only" ? "installed apps only" :
-          "all casks with a homepage"
-        }.`,
-        allowed: !paranoid && s.caskIconMode !== "off",
-      },
+      // Linux: no casks → no cask icon cascade; the entry would describe
+      // a path that can never be exercised, so it's omitted entirely.
+      ...(isLinux
+        ? []
+        : [{
+            label: "Cask homepage probes",
+            desc: `Uninstalled-cask icon cascade — ${
+              s.caskIconMode === "off" ? "disabled" :
+              s.caskIconMode === "installed-only" ? "installed apps only" :
+              "all casks with a homepage"
+            }.`,
+            allowed: !paranoid && s.caskIconMode !== "off",
+          }]),
       {
         label: "brew-browser.zerologic.com/trending-history",
         desc: s.enhancedTrendingEnabled
@@ -139,7 +148,9 @@
       },
       {
         label: "Default browser",
-        desc: "Opening external links hands off to macOS open(1). Not a network call from us.",
+        // tauri-plugin-opener delegates to the `open` crate: open(1) on
+        // macOS, xdg-open (first in its fallback chain) on Linux.
+        desc: `Opening external links hands off to ${isLinux ? "xdg-open" : "macOS open(1)"}. Not a network call from us.`,
         allowed: true,
       },
     ];
@@ -195,8 +206,12 @@
       {#if settings.data.paranoidMode}
         <div class="callout warn" role="status">
           <AlertTriangle size={16} />
-          <span>Offline Mode is on — Trending, Catalog refresh, and
-            Cask icon probes are blocked.</span>
+          {#if isLinux}
+            <span>Offline Mode is on — Trending and Catalog refresh are blocked.</span>
+          {:else}
+            <span>Offline Mode is on — Trending, Catalog refresh, and
+              Cask icon probes are blocked.</span>
+          {/if}
         </div>
       {/if}
     </div>
@@ -245,7 +260,9 @@
         {CATALOG_STALE_MIN}–{CATALOG_STALE_MAX}.</p>
     </div>
 
-    <!-- Cask icon mode -->
+    <!-- Cask icon mode. Linux: casks don't exist there, so the whole
+         control (and the icon cascade it configures) is hidden. -->
+    {#if !isLinux}
     <div class="field">
       <span class="field-label">Cask icon fetching</span>
       <div class="radio-row" role="radiogroup" aria-label="Cask icon fetching">
@@ -267,6 +284,7 @@
         skips the homepage cascade for uninstalled casks. Off disables icon
         extraction entirely.</p>
     </div>
+    {/if}
 
     <!-- Trending TTL -->
     <div class="field">

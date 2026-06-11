@@ -36,13 +36,23 @@ use std::time::{Duration, SystemTime};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use tauri::State;
-use tokio::process::Command;
 
-use crate::brew::exec::run_brew_capture;
-use crate::brew::parse::RawInfoV2;
 use crate::commands::info::validate_cask_token;
-use crate::error::{truncate_head, BrewError};
+use crate::error::BrewError;
 use crate::state::AppState;
+
+// macOS-only: the `.app`-bundle icon extraction pipeline (defaults/sips
+// shell-outs, brew-info resolution, .icns discovery). These symbols are
+// unused on non-macOS targets where `cask_icon` short-circuits to
+// `Ok(None)`, so gate them to avoid dead-code warnings on the Linux build.
+#[cfg(target_os = "macos")]
+use tokio::process::Command;
+#[cfg(target_os = "macos")]
+use crate::brew::exec::run_brew_capture;
+#[cfg(target_os = "macos")]
+use crate::brew::parse::RawInfoV2;
+#[cfg(target_os = "macos")]
+use crate::error::truncate_head;
 
 /// Cache TTL — re-extract if the cached PNG is older than this.
 const ICON_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -72,27 +82,42 @@ pub async fn cask_icon(
         return Ok(Some(data_url));
     }
 
-    // Resolve the .app bundle. None → cask not installed or no `app`
-    // artifact (common for pkg / binary-only casks). Return Ok(None).
-    let app_path = match resolve_app_path(&state, &token).await? {
-        Some(p) => p,
-        None => return Ok(None),
-    };
+    // `.app`-bundle icon extraction is macOS-only — it shells out to the
+    // macOS-native `/usr/bin/defaults` and `/usr/bin/sips` and walks the
+    // `Contents/Resources/*.icns` bundle layout. Linux casks don't
+    // produce `.app` bundles, so the `IconSource` routing won't even
+    // select this path; we short-circuit to `Ok(None)` here anyway as
+    // defense in depth, so we never attempt to spawn binaries that don't
+    // exist on Linux.
+    #[cfg(target_os = "macos")]
+    {
+        // Resolve the .app bundle. None → cask not installed or no `app`
+        // artifact (common for pkg / binary-only casks). Return Ok(None).
+        let app_path = match resolve_app_path(&state, &token).await? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
 
-    // Find the .icns file inside the bundle. None → unbundled app or
-    // some app shipping non-standard resources. Return Ok(None).
-    let icns_path = match find_icns(&app_path).await {
-        Some(p) => p,
-        None => return Ok(None),
-    };
+        // Find the .icns file inside the bundle. None → unbundled app or
+        // some app shipping non-standard resources. Return Ok(None).
+        let icns_path = match find_icns(&app_path).await {
+            Some(p) => p,
+            None => return Ok(None),
+        };
 
-    // Convert .icns → cached PNG. sips failure is a real error
-    // (sips ships with macOS; missing or crashing it is genuinely
-    // exceptional).
-    sips_convert_to_png(&icns_path, &cache_path).await?;
+        // Convert .icns → cached PNG. sips failure is a real error
+        // (sips ships with macOS; missing or crashing it is genuinely
+        // exceptional).
+        sips_convert_to_png(&icns_path, &cache_path).await?;
 
-    // Read back, encode, return.
-    encode_png_as_data_url(&cache_path).await.map(Some)
+        // Read back, encode, return.
+        encode_png_as_data_url(&cache_path).await.map(Some)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(None)
+    }
 }
 
 // ---------- Cache layer ----------
@@ -144,6 +169,7 @@ fn ensure_dir(dir: &Path) -> Result<(), BrewError> {
 
 /// Return the absolute path to the cask's `.app` bundle, or `None` if
 /// the cask isn't installed / has no `app` artifact.
+#[cfg(target_os = "macos")]
 async fn resolve_app_path(
     state: &State<'_, AppState>,
     token: &str,
@@ -193,6 +219,7 @@ async fn resolve_app_path(
 /// Walk `artifacts[].app[]` and return the first string entry. Brew
 /// sometimes serializes `app` as `["Firefox.app"]`, sometimes as
 /// `[{"target": "Firefox.app", "source": "..."}]`; handle both.
+#[cfg(target_os = "macos")]
 fn first_app_filename(artifacts: &Option<serde_json::Value>) -> Option<String> {
     let arr = artifacts.as_ref()?.as_array()?;
     for entry in arr {
@@ -225,6 +252,7 @@ fn first_app_filename(artifacts: &Option<serde_json::Value>) -> Option<String> {
 /// Given an `.app` filename like `"Firefox.app"`, return the first of
 /// `/Applications/<name>` or `~/Applications/<name>` that exists.
 /// Returns `None` if neither does.
+#[cfg(target_os = "macos")]
 fn resolve_app_bundle(filename: &str) -> Option<PathBuf> {
     // Filename safety — must end with `.app` and not contain path
     // separators (so we don't accidentally resolve into a parent dir).
@@ -255,6 +283,7 @@ fn resolve_app_bundle(filename: &str) -> Option<PathBuf> {
 ///
 /// `read_bundle_icon_file` is unchanged — `defaults read` happily
 /// reads any plist path; the gate is the *use* of its return value.
+#[cfg(target_os = "macos")]
 async fn find_icns(app_path: &Path) -> Option<PathBuf> {
     let info_plist = app_path.join("Contents").join("Info.plist");
     let resources = app_path.join("Contents").join("Resources");
@@ -301,6 +330,7 @@ async fn find_icns(app_path: &Path) -> Option<PathBuf> {
 /// Both sides are canonicalized so that a symlink farm pointing back
 /// into `resources` from an external location is still detected as a
 /// traversal — we compare resolved physical paths, not lexical paths.
+#[cfg(target_os = "macos")]
 fn safe_join_in_resources(resources: &Path, candidate: &str) -> Option<PathBuf> {
     // Reject obvious lexical traversal before touching the disk —
     // canonicalize would either resolve out or fail, but a quick
@@ -320,6 +350,7 @@ fn safe_join_in_resources(resources: &Path, candidate: &str) -> Option<PathBuf> 
 /// Shell out to `defaults read <Info.plist> CFBundleIconFile`. Returns
 /// `None` when the key is absent or `defaults` exits non-zero (binary
 /// plists are still readable by `defaults`).
+#[cfg(target_os = "macos")]
 async fn read_bundle_icon_file(info_plist: &Path) -> Option<String> {
     // `defaults read` wants the path without the trailing `.plist`.
     let arg = info_plist
@@ -343,6 +374,7 @@ async fn read_bundle_icon_file(info_plist: &Path) -> Option<String> {
     }
 }
 
+#[cfg(target_os = "macos")]
 async fn first_icns_in_dir(dir: &Path) -> Option<PathBuf> {
     let mut rd = tokio::fs::read_dir(dir).await.ok()?;
     // Read all entries first so we can sort for determinism.
@@ -361,6 +393,7 @@ async fn first_icns_in_dir(dir: &Path) -> Option<PathBuf> {
 
 // ---------- sips conversion ----------
 
+#[cfg(target_os = "macos")]
 async fn sips_convert_to_png(input: &Path, output: &Path) -> Result<(), BrewError> {
     // sips: macOS-native, no extra deps. Resize to ICON_PIXELS square.
     let out = Command::new("/usr/bin/sips")
@@ -400,6 +433,8 @@ async fn sips_convert_to_png(input: &Path, output: &Path) -> Result<(), BrewErro
 mod tests {
     use super::*;
     use crate::commands::info::validate_package_name;
+    // `json!` is only used by the macOS-gated `first_app_filename` tests.
+    #[cfg(target_os = "macos")]
     use serde_json::json;
 
     // ---------- token validation reuse ----------
@@ -438,8 +473,9 @@ mod tests {
         assert!(validate_cask_token(".").is_err());
     }
 
-    // ---------- first_app_filename ----------
+    // ---------- first_app_filename (macOS-only: gated with the fn) ----------
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn first_app_filename_handles_string_form() {
         let artifacts = Some(json!([
@@ -448,6 +484,7 @@ mod tests {
         assert_eq!(first_app_filename(&artifacts).as_deref(), Some("Firefox.app"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn first_app_filename_handles_object_target_form() {
         let artifacts = Some(json!([
@@ -459,6 +496,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn first_app_filename_falls_back_to_source_basename() {
         let artifacts = Some(json!([
@@ -467,6 +505,7 @@ mod tests {
         assert_eq!(first_app_filename(&artifacts).as_deref(), Some("Some.app"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn first_app_filename_skips_non_app_artifacts() {
         let artifacts = Some(json!([
@@ -477,6 +516,7 @@ mod tests {
         assert_eq!(first_app_filename(&artifacts).as_deref(), Some("Real.app"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn first_app_filename_returns_none_for_no_artifacts() {
         assert_eq!(first_app_filename(&None), None);
@@ -489,6 +529,7 @@ mod tests {
 
     // ---------- resolve_app_bundle ----------
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_app_bundle_rejects_non_app_filenames() {
         assert_eq!(resolve_app_bundle("Firefox"), None);
@@ -496,6 +537,7 @@ mod tests {
         assert_eq!(resolve_app_bundle(""), None);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_app_bundle_rejects_path_traversal() {
         assert_eq!(resolve_app_bundle("../etc/passwd.app"), None);
@@ -503,6 +545,7 @@ mod tests {
         assert_eq!(resolve_app_bundle("sub/dir/Foo.app"), None);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn resolve_app_bundle_returns_none_when_neither_path_exists() {
         // This filename is overwhelmingly unlikely to be installed.
@@ -564,6 +607,7 @@ mod tests {
 
     // ---------- M5: safe_join_in_resources ----------
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn safe_join_accepts_plain_filename_in_resources() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -576,6 +620,7 @@ mod tests {
         assert!(resolved.ends_with("AppIcon.icns"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn safe_join_rejects_dotdot_traversal() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -590,6 +635,7 @@ mod tests {
         assert!(safe_join_in_resources(&resources, "../../../../etc/passwd.icns").is_none());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn safe_join_rejects_slash_separated_subpath() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -602,6 +648,7 @@ mod tests {
         assert!(safe_join_in_resources(&resources, "sub/x.icns").is_none());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn safe_join_rejects_symlink_pointing_outside_resources() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -620,6 +667,7 @@ mod tests {
         assert!(r.is_none(), "symlink escape should be rejected, got {:?}", r);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn safe_join_returns_none_for_nonexistent_target() {
         let tmp = tempfile::tempdir().expect("tempdir");

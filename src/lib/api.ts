@@ -47,6 +47,7 @@ import type {
   SearchResults,
   Service,
   Settings,
+  SystemStatus,
   TrendingHistoryIndex,
   TrendingHistorySeries,
   TrendingReport,
@@ -61,6 +62,35 @@ import type {
 
 export function brewDoctor(): Promise<BrewEnvironment> {
   return invoke<BrewEnvironment>("brew_doctor");
+}
+
+/**
+ * Cheap local probe for the onboarding gate: is brew resolved (and where),
+ * and are the Xcode Command Line Tools present? Reads the backend's cached
+ * brew path — no filesystem re-scan, no network, no gates.
+ */
+export function systemStatus(): Promise<SystemStatus> {
+  return invoke<SystemStatus>("system_status");
+}
+
+/**
+ * Re-run brew detection and write the result into backend state so every
+ * brew-dependent command sees the recovered binary — the onboarding view
+ * polls this until the user's Homebrew install lands, then the app comes
+ * alive without a relaunch.
+ */
+export function brewRedetect(): Promise<SystemStatus> {
+  return invoke<SystemStatus>("brew_redetect");
+}
+
+/**
+ * Open Terminal.app with the official Homebrew install one-liner pre-typed
+ * (a fixed constant on the backend — zero interpolation). Throws a typed
+ * `BrewErrorPayload` when osascript fails (e.g. Automation permission
+ * denied); callers fall back to the copy-to-clipboard affordance.
+ */
+export function openTerminalInstall(): Promise<void> {
+  return invoke<void>("open_terminal_install");
 }
 
 /**

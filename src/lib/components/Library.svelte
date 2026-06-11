@@ -18,6 +18,7 @@
   import { enrichment } from "$lib/stores/enrichment.svelte";
   import { vulnerabilities } from "$lib/stores/vulnerabilities.svelte";
   import { resolveCategoryIcon } from "$lib/util/categoryIcon";
+  import { isLinux } from "$lib/util/platform";
   import type { Package } from "$lib/types";
 
   type SortKey = "name" | "version" | "kind" | "outdated";
@@ -31,11 +32,13 @@
   // when the feature is enabled. Adding it unconditionally would show a
   // dead filter pill (always 0) to users who never opted in, which is
   // worse than not surfacing it at all.
-  let libraryFilters = $derived<LibraryFilter[]>(
-    vulnerabilities.enabled
+  // Linux: casks don't exist there, so the Casks pill (always 0) is dropped.
+  let libraryFilters = $derived.by<LibraryFilter[]>(() => {
+    const base: LibraryFilter[] = vulnerabilities.enabled
       ? ["all", "formulae", "casks", "outdated", "vulnerable"]
-      : ["all", "formulae", "casks", "outdated"],
-  );
+      : ["all", "formulae", "casks", "outdated"];
+    return base.filter((f) => !(isLinux && f === "casks"));
+  });
 
   // Library shares the Discover store's chip selection so jumping back-and-forth
   // between tabs keeps context. Categories load is idempotent.
@@ -244,12 +247,20 @@
         {/snippet}
       </EmptyState>
     {:else}
-      <div class="list-header" role="row">
+      <!-- Linux: every installed package is a formula, so the Type column
+           is pure noise — the sortable header gives way to an empty
+           placeholder cell (the rows keep a slim 5th cell for the vuln
+           severity dot, see PackageRow's `no-kind` variant). -->
+      <div class="list-header" class:no-kind={isLinux} role="row">
         <span></span>
         <SortableHeader label="Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={changeSort} />
         <span class="header-desc">Description</span>
         <SortableHeader label="Version" sortKey="version" active={sortKey === "version"} dir={sortDir} onSort={changeSort} />
-        <SortableHeader label="Type" sortKey="kind" active={sortKey === "kind"} dir={sortDir} onSort={changeSort} />
+        {#if !isLinux}
+          <SortableHeader label="Type" sortKey="kind" active={sortKey === "kind"} dir={sortDir} onSort={changeSort} />
+        {:else}
+          <span></span>
+        {/if}
         <SortableHeader label="Outdated" sortKey="outdated" active={sortKey === "outdated"} dir={sortDir} onSort={changeSort} />
       </div>
       <div class="list" role="list" aria-label="Installed packages">
@@ -428,6 +439,29 @@
     .list-header > :nth-child(3),
     .list-header > :nth-child(4),
     .list-header > :nth-child(6) { display: none; }
+  }
+
+  /* Linux (`no-kind`): mirrors PackageRow's `no-kind` templates — the
+     TYPE track shrinks from 80px to the 12px vuln-dot slot. The header
+     keeps an empty placeholder in the 5th cell, so the macOS nth-child
+     hide rules above apply unchanged at every breakpoint. */
+  .list-header.no-kind {
+    grid-template-columns: 24px minmax(0, 1fr) minmax(0, 2fr) 120px 12px 120px;
+  }
+  @media (max-width: 1100px) {
+    .list-header.no-kind {
+      grid-template-columns: 24px minmax(0, 1fr) minmax(0, 2fr) 120px 12px;
+    }
+  }
+  @media (max-width: 900px) {
+    .list-header.no-kind {
+      grid-template-columns: 24px minmax(0, 1fr) 120px 12px;
+    }
+  }
+  @media (max-width: 720px) {
+    .list-header.no-kind {
+      grid-template-columns: 24px minmax(0, 1fr) 12px;
+    }
   }
   .list { display: flex; flex-direction: column; }
 </style>

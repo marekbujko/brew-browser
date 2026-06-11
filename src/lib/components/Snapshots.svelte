@@ -19,6 +19,7 @@
   import { toast } from "$lib/stores/toast.svelte";
   import { brewfileDump, brewfileInstall, brewfileDelete, brewfileExport, brewfileImport } from "$lib/api";
   import type { BrewfileSummary } from "$lib/types";
+  import { isLinux } from "$lib/util/platform";
   import { reportableToastError } from "$lib/util/reportIssue";
 
   let newLabel = $state("");
@@ -162,10 +163,15 @@
     {:else if brewfiles.list.length === 0}
       <!-- Inline CTAs intentionally omitted: the same actions live in
            the panel-head's top-right (Import… + New Snapshot), so the
-           empty state stays purely informational. -->
+           empty state stays purely informational. The storage path mirrors
+           the backend's `resolve_brewfiles_dir` (dirs::data_dir() +
+           brew-browser/brewfiles/): ~/Library/Application Support on macOS,
+           XDG data home (~/.local/share by default) on Linux. -->
       <EmptyState
         title="No snapshots yet."
-        body="Save your current setup so you can restore it on another Mac. Snapshots live in ~/Library/Application Support/brew-browser/brewfiles/ — findable outside the app too."
+        body={isLinux
+          ? "Save your current setup so you can restore it on another machine. Snapshots live in ~/.local/share/brew-browser/brewfiles/ — findable outside the app too."
+          : "Save your current setup so you can restore it on another Mac. Snapshots live in ~/Library/Application Support/brew-browser/brewfiles/ — findable outside the app too."}
       >
         {#snippet icon()}<Archive size={48} />{/snippet}
       </EmptyState>
@@ -176,7 +182,10 @@
             <header class="card-head">
               <div>
                 <h2>{b.label}</h2>
-                <p class="meta">{formatDate(b.createdAt)} · {b.counts.formulae} formulae · {b.counts.casks} casks{#if b.counts.masApps > 0} · {b.counts.masApps} MAS apps{/if}</p>
+                <!-- Brewfiles legitimately carry cask lines (a snapshot may
+                     come from a Mac) — real cask counts always show. Only
+                     the decorative "0 casks" is suppressed on Linux. -->
+                <p class="meta">{formatDate(b.createdAt)} · {b.counts.formulae} formulae{#if !isLinux || b.counts.casks > 0} · {b.counts.casks} casks{/if}{#if b.counts.masApps > 0} · {b.counts.masApps} MAS apps{/if}</p>
               </div>
               <div class="actions">
                 <Button size="sm" variant="primary" onclick={() => (toRestore = b)}>

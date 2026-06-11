@@ -45,6 +45,7 @@
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import Shield from "@lucide/svelte/icons/shield";
   import { brewInfo, brewInstall, brewUninstall, brewUpgrade, appVersion } from "$lib/api";
+  import { isLinux } from "$lib/util/platform";
   import { safeOpenUrl } from "$lib/util/url";
   import { bareToken } from "$lib/util/token";
   import { reportableToastError } from "$lib/util/reportIssue";
@@ -287,6 +288,10 @@
   let pkg = $derived<PackageDetail["package"] | undefined>(detail?.package);
   let isInstalled = $derived(!!pkg?.installedVersion);
   let isOutdated = $derived(!!pkg?.outdated);
+  // Casks are macOS-only; the backend already keeps them out of Discover and
+  // search on Linux, but detail can still surface one (snapshots, deep links)
+  // — never offer an Install that can only fail with "macOS is required".
+  let caskOnLinux = $derived(isLinux && ui.selectedPackage?.kind === "cask");
 
   /** Categories assigned to this package (from `categories.json`). */
   let pkgCategories = $derived.by<string[]>(() => {
@@ -1522,6 +1527,8 @@
           {#snippet icon()}<Trash2 size={16} />{/snippet}
           Uninstall
         </Button>
+      {:else if pkg && caskOnLinux}
+        <p class="cask-unavailable">Casks require macOS — this package can't be installed on Linux.</p>
       {:else if pkg}
         <Button variant="primary" onclick={handleInstallClick}>
           {#snippet icon()}<Download size={16} />{/snippet}
@@ -1820,6 +1827,13 @@
     padding: var(--space-4);
     border-top: 1px solid var(--color-border);
     justify-content: flex-end;
+  }
+
+  .cask-unavailable {
+    margin: 0;
+    font-size: var(--text-body-sm);
+    color: var(--color-text-secondary);
+    align-self: center;
   }
 
   .error { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }

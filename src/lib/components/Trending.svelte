@@ -19,6 +19,7 @@
   import { packages } from "$lib/stores/packages.svelte";
   import { enrichment } from "$lib/stores/enrichment.svelte";
   import { catalog } from "$lib/stores/catalog.svelte";
+  import { isLinux } from "$lib/util/platform";
   import type { PackageKind, TrendingEntry, TrendingWindow } from "$lib/types";
 
   onMount(() => {
@@ -160,12 +161,17 @@
         {#snippet icon()}<TrendingUp size={48} />{/snippet}
       </EmptyState>
     {:else if trending.report}
-      <div class="list-header" role="row">
+      <!-- Linux: every trending entry is kind=formula (the backend filters
+           casks out), so the Type column is pure noise — dropped via the
+           `no-kind` grid variant. macOS keeps the full 8-column layout. -->
+      <div class="list-header" class:no-kind={isLinux} role="row">
         <SortableHeader label="#" sortKey="rank" active={sortKey === "rank"} dir={sortDir} onSort={changeSort} />
         <SortableHeader label="Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={changeSort} />
         <span class="header-desc">Description</span>
         <span class="header-version">Version</span>
-        <SortableHeader label="Type" sortKey="kind" active={sortKey === "kind"} dir={sortDir} onSort={changeSort} />
+        {#if !isLinux}
+          <SortableHeader label="Type" sortKey="kind" active={sortKey === "kind"} dir={sortDir} onSort={changeSort} />
+        {/if}
         <SortableHeader label="Velocity" sortKey="velocity" active={sortKey === "velocity"} dir={sortDir} onSort={changeSort} align="right" />
         <SortableHeader label="Installs" sortKey="installs" active={sortKey === "installs"} dir={sortDir} onSort={changeSort} align="right" />
         <span></span>
@@ -180,6 +186,7 @@
           <li>
             <button
               class="row"
+              class:no-kind={isLinux}
               class:selected={isSelected}
               aria-current={isSelected ? "true" : undefined}
               onclick={() => openEntry(e.name, e.kind)}
@@ -196,7 +203,9 @@
               </span>
               <span class="desc truncate text-muted">{enrichment.summaryOf(e.name) ?? catalog.descOf(e.name, e.kind) ?? ""}</span>
               <span class="version truncate text-muted">{catalog.versionOf(e.name, e.kind) ?? ""}</span>
-              <span class="kind"><Pill tone={e.kind === "formula" ? "formula" : "cask"}>{e.kind}</Pill></span>
+              {#if !isLinux}
+                <span class="kind"><Pill tone={e.kind === "formula" ? "formula" : "cask"}>{e.kind}</Pill></span>
+              {/if}
               <span class="velocity mono" class:surge={tier === "surge"} class:cool={tier === "cool"}>
                 {#if tier === "surge"}
                   <Flame size={12} aria-hidden="true" />
@@ -296,6 +305,43 @@
     .row > :nth-child(4),
     .row > :nth-child(5),
     .row > :nth-child(8) { display: none; }
+  }
+
+  /* Linux (`no-kind`): the TYPE column isn't rendered, leaving 7 cells
+     (# / NAME / DESC / VERSION / VELOCITY / COUNT / TRAIL). Same
+     responsive ladder as macOS with every index past the removed column
+     shifted left by one (Trail is now 7th). The macOS nth-child rules
+     above still hide DESC (3rd) and VERSION (4th) at the right widths. */
+  .list-header.no-kind,
+  .row.no-kind {
+    grid-template-columns: 48px minmax(0, 1fr) minmax(0, 2fr) 100px 90px 120px 100px;
+  }
+  @media (max-width: 1200px) {
+    .list-header.no-kind,
+    .row.no-kind {
+      grid-template-columns: 48px minmax(0, 1fr) minmax(0, 2fr) 100px 90px 120px;
+    }
+    .list-header.no-kind > :nth-child(7),
+    .row.no-kind > :nth-child(7) { display: none; }
+  }
+  @media (max-width: 1000px) {
+    .list-header.no-kind,
+    .row.no-kind {
+      grid-template-columns: 48px minmax(0, 1fr) 100px 90px 120px;
+    }
+  }
+  @media (max-width: 800px) {
+    .list-header.no-kind,
+    .row.no-kind {
+      grid-template-columns: 48px minmax(0, 1fr) 90px 120px;
+    }
+  }
+  @media (max-width: 640px) {
+    /* The macOS rule hides :nth-child(5) (TYPE); without the TYPE column
+       the 5th cell is VELOCITY, which stays visible at this width —
+       restore it (header button and row span are both inline-flex). */
+    .list-header.no-kind > :nth-child(5),
+    .row.no-kind > :nth-child(5) { display: inline-flex; }
   }
 
   /* Sidebar theme-group pattern: sunken background, no border,

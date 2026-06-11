@@ -223,9 +223,25 @@ pub async fn open_in_finder(path: String, state: State<'_, AppState>) -> Result<
         });
     }
 
+    reveal_in_file_manager(&path).await
+}
+
+/// Reveal `path` in the platform file manager. The caller has already
+/// passed the path through the Homebrew-prefix/cache security gate; this
+/// only spawns the reveal.
+///
+/// - macOS: `open -R <path>` selects the item in Finder.
+/// - Linux: there is no portable "reveal and select" verb. `xdg-open
+///   <file>` would *launch* the file in its default app (wrong for a
+///   "show me where this is" action), so we open the containing
+///   directory instead — `xdg-open <parent-dir>` pops the file manager
+///   at the right location. A path with no parent (shouldn't happen for
+///   gated Homebrew paths) falls back to the path itself.
+#[cfg(target_os = "macos")]
+async fn reveal_in_file_manager(path: &str) -> Result<(), BrewError> {
     let status = Command::new("open")
         .arg("-R")
-        .arg(&path)
+        .arg(path)
         .status()
         .await
         .map_err(|e| BrewError::Io {
@@ -234,6 +250,25 @@ pub async fn open_in_finder(path: String, state: State<'_, AppState>) -> Result<
     if !status.success() {
         return Err(BrewError::Internal {
             message: format!("open exited with {:?}", status.code()),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn reveal_in_file_manager(path: &str) -> Result<(), BrewError> {
+    let target = Path::new(path);
+    let dir = target.parent().unwrap_or(target);
+    let status = Command::new("xdg-open")
+        .arg(dir)
+        .status()
+        .await
+        .map_err(|e| BrewError::Io {
+            message: format!("failed to spawn xdg-open: {e}"),
+        })?;
+    if !status.success() {
+        return Err(BrewError::Internal {
+            message: format!("xdg-open exited with {:?}", status.code()),
         });
     }
     Ok(())

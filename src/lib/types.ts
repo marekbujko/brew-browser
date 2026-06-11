@@ -5,6 +5,8 @@
  * `invoke()` returns for each Tauri command.
  */
 
+import { keyringNameCapitalized } from "$lib/util/platform";
+
 // =========================================================
 // 2.1 Common enums
 // =========================================================
@@ -41,6 +43,17 @@ export interface BrewEnvironment {
   version: string | null;
   prefix: string | null;
   pathUsed: string | null;
+}
+
+/**
+ * Snapshot from `system_status` / `brew_redetect` that drives the
+ * missing-Homebrew onboarding gate. `cltFound` is the Xcode Command Line
+ * Tools probe (`xcode-select -p`); always `true` on non-macOS builds.
+ */
+export interface SystemStatus {
+  brewFound: boolean;
+  brewPath: string | null;
+  cltFound: boolean;
 }
 
 // =========================================================
@@ -898,7 +911,7 @@ export function brewErrorMessage(e: BrewErrorPayload): string {
       return `GitHub API rate limit reached. Resets at ${reset}. Sign in to lift the limit.`;
     }
     case "keychain_unavailable":
-      return `macOS Keychain unavailable: ${e.message}`;
+      return `${keyringNameCapitalized} unavailable: ${e.message}`;
     case "auth_required":
       return "Sign in to GitHub to use this feature.";
     case "scope_required":

@@ -5,6 +5,7 @@
   import { enrichment } from "$lib/stores/enrichment.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { vulnerabilities } from "$lib/stores/vulnerabilities.svelte";
+  import { isLinux } from "$lib/util/platform";
   import type { Package, Severity } from "$lib/types";
 
   interface Props {
@@ -83,6 +84,7 @@
 
 <button
   class="row"
+  class:no-kind={isLinux}
   class:selected
   aria-current={selected ? "true" : undefined}
   onclick={() => onSelect?.(pkg)}
@@ -96,8 +98,14 @@
   </span>
   <span class="desc truncate text-muted" title={descOf() ?? ""}>{descOf() ?? ""}</span>
   <span class="version truncate">{pkg.installedVersion ?? pkg.stableVersion ?? "—"}</span>
+  <!-- Linux: every installed package is a formula, so the type pill is
+       pure noise and isn't rendered (`no-kind` collapses the column).
+       The cell itself stays — it also hosts the vulnerability severity
+       dot, which is fully meaningful on Linux. -->
   <span class="kind">
-    <Pill tone={pkg.kind === "formula" ? "formula" : "cask"}>{pkg.kind}</Pill>
+    {#if !isLinux}
+      <Pill tone={pkg.kind === "formula" ? "formula" : "cask"}>{pkg.kind}</Pill>
+    {/if}
     {#if vulnMaxSeverity !== null}
       <!-- Severity dot — colour wins by max severity. Hover tooltip
            exposes the count and highest band; click bubbles up to the
@@ -168,6 +176,30 @@
     .row > :nth-child(3),
     .row > :nth-child(4),
     .row > :nth-child(6) { display: none; }
+  }
+
+  /* Linux (`no-kind`): the type pill isn't rendered, so the TYPE track
+     shrinks from 80px to a fixed 12px slot that fits just the 9px vuln
+     severity dot (fixed, not auto, so columns stay aligned across rows
+     with and without findings). The cell count is unchanged — the macOS
+     nth-child hide rules above apply as-is at every breakpoint. */
+  .row.no-kind {
+    grid-template-columns: 24px minmax(0, 1fr) minmax(0, 2fr) 120px 12px 120px;
+  }
+  @media (max-width: 1100px) {
+    .row.no-kind {
+      grid-template-columns: 24px minmax(0, 1fr) minmax(0, 2fr) 120px 12px;
+    }
+  }
+  @media (max-width: 900px) {
+    .row.no-kind {
+      grid-template-columns: 24px minmax(0, 1fr) 120px 12px;
+    }
+  }
+  @media (max-width: 720px) {
+    .row.no-kind {
+      grid-template-columns: 24px minmax(0, 1fr) 12px;
+    }
   }
   .row:hover { background: var(--color-surface-sunken); }
   .row.selected {

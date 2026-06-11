@@ -2,11 +2,16 @@
  * Environment store — tracks the `brew_doctor` probe result.
  * Drives the footer status dot (green / amber / red), tooltip text, and
  * the "Homebrew not found" empty/error states.
+ *
+ * Also owns the missing-Homebrew onboarding gate: `system_status` on
+ * startup, then a 2 s `brew_redetect` poll while brew is missing. The
+ * moment brew appears, polling stops and the library loads — no relaunch.
  */
 
-import { brewDoctor } from "$lib/api";
+import { brewDoctor, brewRedetect, systemStatus } from "$lib/api";
+import { packages } from "$lib/stores/packages.svelte";
 import { isBrewError, brewErrorMessage } from "$lib/types";
-import type { BrewEnvironment } from "$lib/types";
+import type { BrewEnvironment, SystemStatus } from "$lib/types";
 
 class EnvStore {
   /** latest BrewEnvironment from the backend, or null until first probe completes. */
@@ -18,8 +23,24 @@ class EnvStore {
   /** ms-since-epoch of the last completed probe (success or fail). */
   lastCheckedAt: number | null = $state(null);
 
+  /** Latest `system_status` / `brew_redetect` snapshot (onboarding gate). */
+  status: SystemStatus | null = $state(null);
+  /** True once the initial `system_status` probe has settled (success or fail). */
+  statusChecked: boolean = $state(false);
+
+  /** 2 s `brew_redetect` poll handle while brew is missing. */
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+
   /** True when we have a confirmed-installed brew. False if probe failed or installed=false. */
   installed = $derived(this.report?.installed === true);
+
+  /**
+   * Onboarding gate: brew is *confirmed* missing (probe settled and said
+   * no). `+page.svelte` renders OnboardingView instead of the shell while
+   * this is true. Stays false until the first probe settles so a slow IPC
+   * round-trip doesn't flash the onboarding screen at users who have brew.
+   */
+  brewMissing = $derived(this.statusChecked && this.status?.brewFound === false);
 
   /** Human-readable summary for a tooltip. */
   summary = $derived.by(() => {
@@ -74,6 +95,57 @@ class EnvStore {
     }
     await this.refresh();
   }
+
+  /**
+   * Initial onboarding probe. On failure (backend not ready, command
+   * missing) the gate stays open — `brewMissing` remains false and the
+   * packages store's `brew_not_found` message is the fallback.
+   */
+  async checkSystemStatus(): Promise<void> {
+    try {
+      this.applyStatus(await systemStatus());
+    } catch {
+      this.statusChecked = true;
+    }
+  }
+
+  /**
+   * Fold a status snapshot into state and manage the redetect poll:
+   * brew missing → keep (or start) the 2 s poll; brew present → stop
+   * polling, and if this is the missing→found flip, re-probe the env and
+   * force-load the library so the app comes alive without a relaunch.
+   */
+  applyStatus(s: SystemStatus): void {
+    const wasMissing = this.status?.brewFound === false;
+    this.status = s;
+    this.statusChecked = true;
+    if (!s.brewFound) {
+      this.startBrewPolling();
+    } else {
+      this.stopBrewPolling();
+      if (wasMissing) {
+        void this.refresh();
+        void packages.load(true);
+      }
+    }
+  }
+
+  private startBrewPolling(): void {
+    if (this.pollTimer !== null) return;
+    this.pollTimer = setInterval(() => {
+      void brewRedetect().then(
+        (s) => this.applyStatus(s),
+        () => {}, // transient IPC failure — keep polling
+      );
+    }, 2_000);
+  }
+
+  stopBrewPolling(): void {
+    if (this.pollTimer !== null) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+  }
 }
 
 export const env = new EnvStore();
@@ -118,4 +190,15 @@ export function startEnvProbe(): () => void {
     }
     if (intervalId !== null) clearInterval(intervalId);
   };
+}
+
+/**
+ * Onboarding gate bootstrap — run the initial `system_status` probe;
+ * `applyStatus` keeps a 2 s `brew_redetect` poll alive while brew is
+ * missing and tears it down (plus loads the library) the moment it
+ * appears. Returns an unsubscribe that stops any in-flight polling.
+ */
+export function startOnboardingGate(): () => void {
+  void env.checkSystemStatus();
+  return () => env.stopBrewPolling();
 }

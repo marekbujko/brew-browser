@@ -9,6 +9,7 @@
 
 import { categoriesData, enrichmentLiveCategories, enrichmentLiveVersion } from "$lib/api";
 import { settings } from "$lib/stores/settings.svelte";
+import { isLinux } from "$lib/util/platform";
 import type { CategoriesData, PackageKind } from "$lib/types";
 
 interface CategoryTile {
@@ -87,12 +88,18 @@ class CategoriesStore {
   /**
    * Sorted tile list for the Discover grid. `developer-tools` first (largest),
    * `uncategorized` always last, the rest by descending count.
+   *
+   * Linux: the bundled categories.json is platform-agnostic and carries cask
+   * tokens, but casks don't exist on Linux — they're excluded from the tile
+   * counts so the numbers match the (cask-free) browse lists.
    */
   tiles = $derived.by<CategoryTile[]>(() => {
     if (!this.data) return [];
     const counts = new Map<string, number>();
-    for (const cats of Object.values(this.data.casks)) {
-      for (const c of cats) counts.set(c, (counts.get(c) ?? 0) + 1);
+    if (!isLinux) {
+      for (const cats of Object.values(this.data.casks)) {
+        for (const c of cats) counts.set(c, (counts.get(c) ?? 0) + 1);
+      }
     }
     for (const cats of Object.values(this.data.formulae)) {
       for (const c of cats) counts.set(c, (counts.get(c) ?? 0) + 1);

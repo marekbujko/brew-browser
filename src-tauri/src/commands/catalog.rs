@@ -252,6 +252,14 @@ pub async fn catalog_formulae_summary(
 pub async fn catalog_casks_summary(
     state: State<'_, AppState>,
 ) -> Result<Vec<CatalogEntrySummary>, BrewError> {
+    // Casks are macOS-only — Homebrew on Linux has no cask support, and the
+    // bundled catalog is built on macOS. Returning an empty summary here keeps
+    // every downstream surface (Discover tiles, catalog search, category
+    // counts) honestly cask-free on Linux instead of offering installs that
+    // can only fail with "macOS is required for this software."
+    if cfg!(not(target_os = "macos")) {
+        return Ok(Vec::new());
+    }
     let catalog = read_active_catalog(&state).await;
     let mut out: Vec<CatalogEntrySummary> = catalog
         .casks

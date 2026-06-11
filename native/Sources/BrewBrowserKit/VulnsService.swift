@@ -137,9 +137,10 @@ struct VulnExposure: Sendable, Hashable {
 
 // MARK: - Errors
 
-/// Errors surfaced by ``VulnsService``. Self-contained (does not reuse
-/// `BrewService`'s `BrewError`) so this file stands alone, per the
-/// task constraint of touching only this file.
+/// Errors surfaced by ``VulnsService``. Its own type (not `BrewService`'s
+/// `BrewError`) so a vulns failure is distinguishable at the call site —
+/// `.brewNotFound` here is the honest "no Homebrew" signal where the old
+/// code fabricated a default brew path and mis-probed instead.
 enum VulnsServiceError: Error, LocalizedError {
     case brewNotFound
     /// Real scan failure — exit code ≥ 2 (exit 0/1 are NOT failures, see
@@ -188,27 +189,24 @@ struct VulnsService: Sendable {
     /// `BREW_VULNS_INSTALL_CMD`).
     static let installCommand = "brew install homebrew/brew-vulns/brew-vulns"
 
-    /// Resolved path to the brew binary.
-    private let brewPath: String
+    /// Resolved path to the brew binary, or nil when no Homebrew install was
+    /// found. Internal (not private) so tests can assert it mirrors the shared
+    /// resolver exactly — a nil resolution must stay nil, never be papered
+    /// over with a fabricated default path (the old `/opt/homebrew/bin/brew`
+    /// fallback silently mis-probed Intel/brew-less machines).
+    let brewPath: String?
 
     /// Inject a resolved brew path (testing / explicit configuration).
-    init(brewPath: String) {
+    /// nil = "no brew" — every scan/probe call then surfaces `.brewNotFound`.
+    init(brewPath: String?) {
         self.brewPath = brewPath
     }
 
-    /// Resolve the brew binary the way the Rust backend does: prefer the
-    /// Apple-Silicon prefix, fall back to the Intel path. Non-throwing so it
-    /// can be a stored property; if neither path exists we keep the Apple-
-    /// Silicon default and the scan/probe calls simply report not-installed.
+    /// Resolve via the shared `BrewService.resolveBrewPath()` (Apple-Silicon
+    /// prefix, then Intel). Non-throwing so it can be a stored property; a nil
+    /// resolution is kept as-is and surfaces as `.brewNotFound` at call time.
     init() {
-        self.brewPath = Self.resolveBrewPath() ?? "/opt/homebrew/bin/brew"
-    }
-
-    /// Prefer `/opt/homebrew/bin/brew` (Apple Silicon), fall back to
-    /// `/usr/local/bin/brew` (Intel).
-    private static func resolveBrewPath() -> String? {
-        let candidates = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+        self.brewPath = BrewService.resolveBrewPath()
     }
 
     // MARK: Install detection
@@ -330,6 +328,7 @@ struct VulnsService: Sendable {
     /// can apply the right exit-code policy per command (GOTCHA #1: scans
     /// treat exit 1 as success; install does not).
     private func run(_ args: [String]) throws -> ProcessResult {
+        guard let brewPath else { throw VulnsServiceError.brewNotFound }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: brewPath)
         process.arguments = args

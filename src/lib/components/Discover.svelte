@@ -18,6 +18,7 @@
   import { enrichment } from "$lib/stores/enrichment.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { resolveCategoryIcon } from "$lib/util/categoryIcon";
+  import { isLinux } from "$lib/util/platform";
   import type { PackageKind, SearchHit } from "$lib/types";
 
   // Lazy-load categories + catalog summary on mount. The stores guard
@@ -111,6 +112,10 @@
   /**
    * Browse-mode list (no search query): union of all packages whose categories
    * intersect the selected chips. Sorted alphabetically for stable scan order.
+   *
+   * Linux: the bundled categories.json still carries cask tokens (it's
+   * platform-agnostic data), but casks don't exist on Linux — skip them so
+   * browse mode never lists uninstallable cask-only apps.
    */
   let browseItems = $derived.by<Array<{ name: string; kind: PackageKind }>>(() => {
     if (!discover.hasFilter || !categories.data) return [];
@@ -118,6 +123,7 @@
     const out: Array<{ name: string; kind: PackageKind }> = [];
     for (const slug of discover.selectedCategories) {
       for (const pkg of categories.tokensInCategory(slug)) {
+        if (isLinux && pkg.kind === "cask") continue;
         const key = `${pkg.kind}:${pkg.name}`;
         if (!set.has(key)) {
           set.add(key);
@@ -327,9 +333,11 @@
       <!-- Default: category tile grid. Phase 13: hidden when AI toggle
            off. The empty state below covers the toggled-off case. -->
       <div class="cat-intro">
+        <!-- Linux: the bundled categories.json includes cask tokens, but
+             casks don't exist there — count formulae only. -->
         <p class="text-muted">
           Browse {fmt(
-            Object.keys(categories.data?.casks ?? {}).length +
+            (isLinux ? 0 : Object.keys(categories.data?.casks ?? {}).length) +
               Object.keys(categories.data?.formulae ?? {}).length,
           )} packages by category, or type a query above to search.
         </p>

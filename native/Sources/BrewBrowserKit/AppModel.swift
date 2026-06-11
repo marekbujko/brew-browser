@@ -890,7 +890,74 @@ public final class AppModel {
     private let trendingService = TrendingService()
     private let githubService = GitHubService()
 
-    public init() {}
+    public init() {
+        // Launch gate: a missing brew binary routes the whole window into the
+        // onboarding pane (ContentView) instead of the normal initial loads.
+        // Synchronous + cheap (two FileManager stats), so the very first body
+        // evaluation already knows which root to build — no flash of the
+        // normal UI before the gate kicks in.
+        brewMissing = BrewService.resolveBrewPath() == nil
+    }
+
+    // MARK: - Missing-Homebrew onboarding
+
+    /// True while no brew binary resolves — ContentView swaps the whole window
+    /// for `OnboardingView` and `pollForBrew()` re-checks until one appears.
+    /// Set synchronously at init (the launch gate) and cleared by the poll.
+    var brewMissing = false
+
+    /// Whether the Xcode Command Line Tools are installed (`xcode-select -p`
+    /// exits 0). Drives the onboarding step list: the CLT step is shown first
+    /// when they're missing, since the Homebrew installer needs them. Probed
+    /// by `pollForBrew()` each pass; meaningful only while onboarding shows.
+    var cltInstalled = false
+
+    /// One onboarding poll step, split from the loop so tests can drive the
+    /// transitions without a real install: records the CLT probe, exits the
+    /// onboarding state when brew resolved. Returns true when onboarding is
+    /// over (brew found) so the caller can stop polling.
+    @discardableResult
+    func updateOnboarding(brewFound: Bool, cltFound: Bool) -> Bool {
+        cltInstalled = cltFound
+        if brewFound { brewMissing = false }
+        return !brewMissing
+    }
+
+    /// Re-check every 2s while the onboarding pane is up: does a brew binary
+    /// resolve yet, and are the CLT installed? When brew appears the flag
+    /// flips and the normal root view (whose `.task`s fire the standard
+    /// initial load sequence) replaces the onboarding pane. Runs from
+    /// OnboardingView's `.task`, so SwiftUI cancels it with the view.
+    func pollForBrew() async {
+        while brewMissing, !Task.isCancelled {
+            // Probe off the main actor — both checks shell out / stat files.
+            let (brewFound, cltFound) = await Task.detached(priority: .utility) {
+                (BrewService.resolveBrewPath() != nil, Self.commandLineToolsInstalled())
+            }.value
+            if updateOnboarding(brewFound: brewFound, cltFound: cltFound) { return }
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    /// `xcode-select -p` exit 0 = the Command Line Tools (or full Xcode) are
+    /// installed. Fixed executable + args, no interpolation; any spawn failure
+    /// reads as not-installed.
+    nonisolated static func commandLineToolsInstalled() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        process.arguments = ["-p"]
+        process.currentDirectoryURL = URL(fileURLWithPath: "/")
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
 
 #if DEBUG
     /// A model pre-populated with representative data for SwiftUI `#Preview`s

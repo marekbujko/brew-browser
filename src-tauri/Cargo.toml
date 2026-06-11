@@ -69,12 +69,6 @@ flate2 = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# OS-native secret storage. Phase 12e (GitHub Device Flow) stores the
-# OAuth access token in the macOS Keychain under
-# `com.zerologic.brew-browser` / `github_access_token`. The crate fans out to
-# Keychain on macOS, Credential Manager on Windows, Secret Service on
-# Linux — we only use the macOS path.
-keyring = { version = "3", features = ["apple-native"] }
 # URL-encoded form bodies for the GitHub Device Flow endpoints.
 # `serde_urlencoded` is already pulled in transitively by `reqwest`
 # but `url` (parsing) is not. Keep this dep tight.
@@ -83,12 +77,32 @@ url = "2"
 # Native macOS window vibrancy (NSVisualEffectView) — gives the sidebar that
 # "frosted glass" look the rest of macOS uses. Cross-platform crate; we only
 # call its macOS APIs.
+#
+# OS-native secret storage. Phase 12e (GitHub Device Flow) stores the
+# OAuth access token under `com.zerologic.brew-browser` /
+# `github_access_token`. The `keyring` crate exposes a single unified
+# `Entry` / `Error` API (`github/auth.rs::SystemKeychain`) regardless of
+# backend, so only the Cargo feature set is platform-specific:
+#   - macOS  → `apple-native` (Security framework / Keychain).
+#   - Linux  → `sync-secret-service` (persistent across reboot, backed by
+#     gnome-keyring / kwallet via the Secret Service D-Bus API — NOT the
+#     session-scoped kernel keyutils) + `crypto-rust` (pure-Rust AES, so
+#     no system OpenSSL build dependency on CI). See the Linux target
+#     section below.
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "0.6"
+keyring = { version = "3", features = ["apple-native"] }
 # Direct use of the Security framework for a single batched Keychain read
 # (one SecItemCopyMatching for all GitHub items → one auth prompt instead of
 # three). Pinned to "2" to unify with the version keyring already compiles.
 security-framework = "2"
+
+# Linux secret storage. Secret Service requires a running daemon
+# (gnome-keyring / kwallet); on a headless box or a minimal WM without
+# one, GitHub sign-in fails closed via `BrewError::KeychainUnavailable`
+# (the rest of the app is unaffected). See `github/auth.rs`.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]
 # Reserved for future integration tests that need a sandbox dir

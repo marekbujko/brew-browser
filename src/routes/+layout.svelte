@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { ui, watchSystemTheme } from "$lib/stores/ui.svelte";
-  import { startEnvProbe } from "$lib/stores/env.svelte";
+  import { startEnvProbe, startOnboardingGate } from "$lib/stores/env.svelte";
   import { activity } from "$lib/stores/activity.svelte";
   import { services } from "$lib/stores/services.svelte";
   import { settings } from "$lib/stores/settings.svelte";
@@ -66,9 +66,14 @@
 
     const unwatch = watchSystemTheme(() => ui.theme);
     const stopProbe = startEnvProbe();
+    // Missing-Homebrew onboarding gate: one system_status probe, then a
+    // 2 s brew_redetect poll while brew is missing. `+page.svelte` swaps
+    // the shell for OnboardingView via `env.brewMissing`.
+    const stopOnboarding = startOnboardingGate();
     return () => {
       unwatch();
       stopProbe();
+      stopOnboarding();
       unlistenAbout?.();
       unlistenSettings?.();
     };

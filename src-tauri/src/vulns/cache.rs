@@ -111,6 +111,10 @@ impl VulnKey {
     /// Parse the on-disk key form. Returns `None` for malformed input;
     /// callers should drop unparseable entries (probably from a future
     /// schema or a corrupted file) rather than fail-open.
+    ///
+    /// Currently uncalled (cache loading treats stored keys as opaque
+    /// strings); kept as the documented inverse of `to_storage_key`.
+    #[allow(dead_code)]
     pub fn parse(s: &str) -> Option<Self> {
         // Split on the first two `:` so names with `@` (openssl@3) or
         // versions with `:` (rare but possible for epoch-style versions)
@@ -221,6 +225,11 @@ impl VulnsCache {
     }
 
     /// Lookup a record. Returns `None` if absent OR stale.
+    ///
+    /// No production caller since the scan flow moved to whole-set
+    /// fingerprint skips; exercised by the tests below and kept as the
+    /// per-key TTL counterpart of the stale-tolerant lookup.
+    #[allow(dead_code)]
     pub fn get_fresh(&self, key: &VulnKey) -> Option<&ScanRecord> {
         let rec = self.file.entries.get(&key.to_storage_key())?;
         if record_is_fresh(rec) {
@@ -307,7 +316,9 @@ pub fn cache_path(app_data_dir: &Path) -> PathBuf {
 }
 
 /// Per-record freshness check. Pulled out so the predicate is easy to
-/// stub in tests if we ever need a synthetic clock.
+/// stub in tests if we ever need a synthetic clock. (Only caller is
+/// `get_fresh`, itself currently test-only — see there.)
+#[allow(dead_code)]
 fn record_is_fresh(rec: &ScanRecord) -> bool {
     elapsed_since(rec.scanned_at) < VULNS_CACHE_TTL
 }

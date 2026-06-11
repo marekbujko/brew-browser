@@ -36,7 +36,13 @@ pub async fn brew_search(
         )
         .await
     });
+    // Casks are macOS-only; on Linux `brew search --cask` is a guaranteed
+    // error (Homebrew has no cask support there), so don't spawn it at all —
+    // the cask side of the results is simply empty.
     let c_task = tokio::spawn(async move {
+        if cfg!(not(target_os = "macos")) {
+            return Ok(String::new());
+        }
         run_brew_capture(
             &path2,
             &["search", "--cask", &q2],

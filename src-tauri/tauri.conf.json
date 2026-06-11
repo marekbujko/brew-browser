@@ -51,6 +51,18 @@
       "signingIdentity": "Developer ID Application: Michael Sitarzewski (7JQGQ7CRH8)",
       "hardenedRuntime": true,
       "minimumSystemVersion": "13.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
     }
   }
 }

@@ -526,3 +526,31 @@ defined roles). See [[project-native-swift-rebuild]] cross-session memory.
   snapshot path stays; a hybrid (prefer brew's cache, fall back to bundled) is a
   deferred roadmap item. Interim: regenerate the bundle each release via
   `tools/catalog/fetch.py` (done 2026-06-07: as_of now, 8404 formulae / 7703 casks).
+
+## 2026-06-11: Intel = separate per-arch builds (not universal); casks gated off Linux; installer never runs in-app
+
+- **Separate arm64 + x86_64 artifacts for BOTH builds, no universal binaries**
+  (user decision: "universal adds unnecessary weight for arm users"). Tauri:
+  two dmgs, updater manifest gains `darwin-x86_64`, cask goes per-arch
+  (`sha256 arm:/intel:`). Native: `build-app.sh [config] [arch]` +
+  `release.sh` loops arches into arch-suffixed zips/dmgs; single Sparkle feed
+  first (generate_appcast emits `sparkle:hardwareRequirements`), dual-feed
+  fallback documented in the script if it can't disambiguate. Native x86_64
+  audience = the four Intel Macs that run macOS 26 (MBP 16" 2019, MBP 13"
+  2020 4-port, iMac 27" 2020, Mac Pro 2019 — Apple 122867); Intel Mac minis
+  cap at Sequoia → served by the Tauri x64 dmg (min macOS 13).
+- **Casks are a macOS-only concept — gate them out of Linux entirely**, data
+  layer first (`catalog_casks_summary` empty, `brew search --cask` never
+  spawned) plus a UI terminology sweep behind `isLinux`. Homebrew has no
+  Linux cask mechanism even for apps with native Linux builds (Flatpak/Snap
+  own that role). Hiding beats erroring: "macOS is required" mid-install is
+  a trust-destroying dead end. The Library/PackageRow kind cell survives as a
+  12px slot because it also hosts the vulnerability dot (functional on Linux).
+- **The Homebrew installer never runs inside the app** (onboarding): it needs
+  sudo + an interactive TTY, and an app silently wielding admin rights is the
+  exact trust failure brew-browser avoids. Open Terminal pre-types a FIXED
+  constant command (macOS); Linux is copy-only. The app polls the known
+  prefixes every 2s and recovers in-process — PATH setup isn't needed for
+  detection because we watch prefixes directly, not the shell environment.
+
+**References**: `tasks/2026-06/13-intel-builds-onboarding-linux.md`

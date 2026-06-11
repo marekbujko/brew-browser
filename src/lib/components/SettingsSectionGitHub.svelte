@@ -28,6 +28,7 @@
 
   import { settings } from "$lib/stores/settings.svelte";
   import { github } from "$lib/stores/github.svelte";
+  import { keyringName } from "$lib/util/platform";
 
   onMount(() => {
     void github.loadStatus();
@@ -117,7 +118,7 @@
       <strong>What sign-in is used for</strong>
     </div>
     <p class="privacy-body">
-      brew-browser stores your token in the macOS Keychain. The token is
+      brew-browser stores your token in the {keyringName}. The token is
       <strong>never</strong> sent over IPC to the renderer,
       <strong>never</strong> written to disk, and <strong>never</strong>
       logged. Only the derived <code>{`{ signedIn, username, scopes }`}</code>

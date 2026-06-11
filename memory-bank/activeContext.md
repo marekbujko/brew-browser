@@ -1,5 +1,42 @@
 # Active Context
 
+> ## 🔧 IN FLIGHT 2026-06-10/11: `feat/intel-builds-and-onboarding` (committed + pushed, PR pending)
+>
+> Triggered by post-release "corrupt download" reports → root cause was Intel
+> users opening arm64-only dmgs (artifacts audited bit-perfect; nothing corrupt).
+> Three workstreams, all BUILT + QA GREEN + VM-VERIFIED — full record:
+> `tasks/2026-06/13-intel-builds-onboarding-linux.md`:
+>
+> - **WS1 Onboarding (both shells):** brew-missing → guided first-run view
+>   (CLT step on macOS, apt-deps note on Linux, Copy primary, Open Terminal
+>   macOS-only, fixed-constant command strings) + 2s poll → auto-dissolve into
+>   the library, same process, no relaunch. **Proven live on the Linux VM**
+>   (real nuke → onboarding → real reinstall → auto-recovery).
+> - **WS2 Intel:** Tauri x86_64 (separate dmgs, NOT universal — user decision;
+>   `darwin-x86_64` manifest key; per-arch cask at release time) + native
+>   per-arch zips/dmgs (`release.sh` loops arches; appcast-ordering bug fixed).
+>   x64 cross-compiles verified BOTH stacks (native x64 .app assembled end-to-
+>   end). ⚠️ **Tauri release builds on this host: E0463 proc-macro failures
+>   ROOT-CAUSED** — `tauri build` exports `MACOSX_DEPLOYMENT_TARGET=13.0` and
+>   the macOS 27 beta toolchain makes proc-macro dylibs built under that env
+>   unloadable; cargo doesn't fingerprint the var so the taint persists until
+>   `cargo clean`. Recipe: rustup toolchain on PATH + PRIME with plain
+>   `cargo build --release [--target …]` before each `npm run tauri build`.
+>   Full forensics + recipe: task doc 13 caveats.
+> - **WS3 Linux:** `282d8ff` integrated (3-way, conflicts resolved), deb/rpm/
+>   AppImage build + install + run **verified in the Scratch VM** (GNOME
+>   Wayland, Linuxbrew detect, real installs). **Casks fully gated on Linux**
+>   (data layer: catalog/search; UI sweep: Dashboard/Library/Trending/Discover/
+>   Settings/Snapshots/About — casks are a macOS-only concept, no Linux variant).
+>
+> **QA:** cargo 618 ✅ | svelte-check 0 err ✅ | swift 44 ✅ | dead-code warnings
+> cleaned (vulns/cache.rs `#[allow]` per file precedent). **Next:** PR → release
+> (proposed Tauri 0.5.2 + native 0.1.1, user to confirm), per-arch cask body in
+> ws2-tauri agent report, Linux artifacts ship "manual install, no auto-update"
+> first round (updater story unwired). VM left brew 6.0.0 + jq/tree/alluxio.
+>
+> ---
+>
 > ## 🚀 SHIPPED 2026-06-07: Tauri 0.5.1 + native 0.1.0 (first native release)
 >
 > Both builds signed, notarized, released (tag `v0.5.1` on `main`); Tauri updater

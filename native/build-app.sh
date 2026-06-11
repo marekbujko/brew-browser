@@ -3,17 +3,31 @@
 # launches as a real, activatable Mac app (SPM alone produces a bare binary
 # with no Info.plist, which macOS treats as a background process).
 #
-# Usage: native/build-app.sh [debug|release]   (default: debug)
+# Usage: native/build-app.sh [debug|release] [arm64|x86_64]   (default: debug, host arch)
+#        The arch may also come from the ARCH env var; the positional arg wins.
+#        No arch given = no --arch flag = exactly the historical host (arm64)
+#        build. x86_64 native covers ONLY the four Intel Macs that run macOS 26
+#        (MBP 16" 2019, MBP 13" 2020 4-port, iMac 27" 2020, Mac Pro 2019).
 set -euo pipefail
 
 CONFIG="${1:-debug}"
+ARCH="${2:-${ARCH:-}}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE"
 
-echo "==> swift build ($CONFIG)"
-swift build -c "$CONFIG"
-
-BINDIR="$(swift build -c "$CONFIG" --show-bin-path)"
+# With an explicit --arch, SwiftPM emits to .build/<arch>-apple-macosx/<config>/
+# instead of .build/<config>/ — so BINDIR (which the binary copy, the resource-
+# bundle glob, and the Sparkle.framework path below all hang off) MUST come from
+# --show-bin-path with the same flags as the build itself.
+if [ -n "$ARCH" ]; then
+  echo "==> swift build ($CONFIG, $ARCH)"
+  swift build -c "$CONFIG" --arch "$ARCH"
+  BINDIR="$(swift build -c "$CONFIG" --arch "$ARCH" --show-bin-path)"
+else
+  echo "==> swift build ($CONFIG)"
+  swift build -c "$CONFIG"
+  BINDIR="$(swift build -c "$CONFIG" --show-bin-path)"
+fi
 BIN="$BINDIR/BrewBrowser"
 APP="$HERE/BrewBrowser.app"
 

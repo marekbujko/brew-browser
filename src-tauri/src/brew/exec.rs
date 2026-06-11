@@ -35,6 +35,24 @@ pub type JobsMap = Arc<Mutex<HashMap<Uuid, JobHandle>>>;
 ///
 /// On non-zero exit, returns `BrewError::BrewExitNonZero` with the last
 /// ~4 KB of stderr. The `display_command` string is the user-facing form.
+/// A directory that is guaranteed to exist and be readable by the
+/// invoking user on every supported platform. We set this as the
+/// working directory for every `brew` subprocess.
+///
+/// **Why:** Homebrew refuses to run when its current working directory
+/// isn't readable by the user — on Linux it aborts with "The current
+/// working directory must be readable to <user> to run brew." A GUI app
+/// inherits whatever cwd it was launched from (the app-launcher's cwd,
+/// a stale deleted directory, or — when launched oddly — a root-owned
+/// path the user can't read). Pinning every spawn to `/` makes the brew
+/// invocation independent of how the app happened to be launched. `/`
+/// is world-readable on macOS and Linux and always exists.
+///
+/// Discovered during the v0.6.0 Linux bring-up: launching the app from
+/// a directory the user couldn't read made every `brew info` fail with
+/// the readable-cwd error, surfacing as "Couldn't load packages."
+const BREW_SPAWN_CWD: &str = "/";
+
 pub async fn run_brew_capture(
     brew_path: &Path,
     args: &[&str],
@@ -42,6 +60,7 @@ pub async fn run_brew_capture(
 ) -> Result<String, BrewError> {
     let mut cmd = Command::new(brew_path);
     cmd.args(args)
+        .current_dir(BREW_SPAWN_CWD)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -99,6 +118,7 @@ pub async fn run_brew_streaming(
 
     let mut cmd = Command::new(brew_path);
     cmd.args(&str_args)
+        .current_dir(BREW_SPAWN_CWD)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

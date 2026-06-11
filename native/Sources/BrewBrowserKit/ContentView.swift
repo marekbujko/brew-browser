@@ -33,6 +33,20 @@ public struct ContentView: View {
     }
 
     public var body: some View {
+        // Missing-Homebrew gate: while no brew binary resolves, the whole
+        // window is the onboarding pane. The normal chrome (and its `.task`
+        // initial loads — bundled data, GitHub status, library) doesn't exist
+        // until brew appears, so nothing fires brew subprocesses early. When
+        // `pollForBrew` flips the flag, `mainContent` is built and those
+        // `.task`s run the standard initial load sequence.
+        if model.brewMissing {
+            OnboardingView(model: model)
+        } else {
+            mainContent
+        }
+    }
+
+    private var mainContent: some View {
       VStack(spacing: 0) {
         NavigationSplitView {
             List(Section.allCases, selection: $model.selection) { section in

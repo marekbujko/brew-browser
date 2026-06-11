@@ -93,7 +93,7 @@
         <a class="btn btn-primary" href="https://github.com/msitarzewski/brew-browser/releases/latest">Download</a>
         <a class="btn btn-secondary" href="https://github.com/msitarzewski/brew-browser">Source on GitHub</a>
       </div>
-      <p class="small-note">Tauri: macOS 13+ &amp; Linux · Native: Swift/SwiftUI, macOS 26 · Apple Silicon · MIT · no telemetry, no accounts</p>
+      <p class="small-note">Tauri: macOS 13+ &amp; Linux · Native: Swift/SwiftUI, macOS 26 · Apple Silicon &amp; Intel · MIT · no telemetry, no accounts</p>
     </div>
   </header>
 
@@ -204,6 +204,13 @@
     <section class="section section-bordered">
       <h2>Get it</h2>
       <p><strong>Direct download (recommended):</strong> the signed &amp; notarized <code>.dmg</code> is on the <a href="https://github.com/msitarzewski/brew-browser/releases/latest">latest release</a>. It's the build signed and tested directly each release, and it keeps you on the app's own verified updater.</p>
+      <p><strong>Which download?</strong></p>
+      <ul class="posture">
+        <li><strong>Apple Silicon (M-series), macOS 13+.</strong> <code>brew-browser_&lt;version&gt;_aarch64.dmg</code></li>
+        <li><strong>Intel Mac, macOS 13+.</strong> <code>brew-browser_&lt;version&gt;_x64.dmg</code></li>
+        <li><strong>Native build, macOS 26.</strong> <code>BrewBrowser-&lt;version&gt;-arm64.dmg</code> (M-series) or <code>BrewBrowser-&lt;version&gt;-x86_64.dmg</code> (Intel).</li>
+        <li><strong>Linux.</strong> Coming.</li>
+      </ul>
       <p>Or install with Homebrew:</p>
       <pre><code>brew tap msitarzewski/brew-browser
 brew install --cask brew-browser</code></pre>

@@ -9,6 +9,7 @@
   import { env } from "$lib/stores/env.svelte";
   import { appVersion } from "$lib/api";
   import { safeOpenUrl } from "$lib/util/url";
+  import { isLinux } from "$lib/util/platform";
   import { SPONSOR_URL } from "$lib/util/donate";
 
   const REPO_URL = "https://github.com/msitarzewski/brew-browser";
@@ -92,10 +93,12 @@
           Technical Writer, and friends), powered by <strong>Claude Code</strong> in
           the terminal, running <strong>Opus 4.7 [1m]</strong>.
         </p>
+        <!-- Linux: casks don't exist there, so the credit names formula
+             maintainers only. -->
         <p class="thanks">
           Thanks also to the Homebrew project for the package data, every
-          formula and cask maintainer for their work, and Tauri for the
-          native shell.
+          {isLinux ? "formula" : "formula and cask"} maintainer for their work,
+          and Tauri for the native shell.
         </p>
       </section>
 

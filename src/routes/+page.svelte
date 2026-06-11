@@ -9,6 +9,7 @@
   import Snapshots from "$lib/components/Snapshots.svelte";
   import Services from "$lib/components/Services.svelte";
   import ActivityHistory from "$lib/components/ActivityHistory.svelte";
+  import OnboardingView from "$lib/components/OnboardingView.svelte";
   import PackageDetail from "$lib/components/PackageDetail.svelte";
   import ResizeHandle from "$lib/components/ResizeHandle.svelte";
   import ActivityDrawer from "$lib/components/ActivityDrawer.svelte";
@@ -24,6 +25,7 @@
 
   import { ui } from "$lib/stores/ui.svelte";
   import { DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_DEFAULT_WIDTH, clampDetailPaneWidth } from "$lib/stores/ui.svelte";
+  import { env } from "$lib/stores/env.svelte";
   import { packages } from "$lib/stores/packages.svelte";
   import { brewfiles } from "$lib/stores/brewfiles.svelte";
   import { trending } from "$lib/stores/trending.svelte";
@@ -186,40 +188,48 @@
     </div>
   </header>
   <div class="main">
-    <Sidebar />
-    <main class="content">
-      {#key ui.section}
-        <div class="section-pane">
-          {#if ui.section === "dashboard"}
-            <Dashboard />
-          {:else if ui.section === "library"}
-            <Library />
-          {:else if ui.section === "discover"}
-            <Discover />
-          {:else if ui.section === "trending"}
-            <Trending />
-          {:else if ui.section === "snapshots"}
-            <Snapshots />
-          {:else if ui.section === "services"}
-            <Services />
-          {:else if ui.section === "activity"}
-            <ActivityHistory />
-          {/if}
-        </div>
-      {/key}
-    </main>
-    {#if ui.selectedPackage}
-      <ResizeHandle
-        width={ui.detailPaneWidth}
-        min={DETAIL_PANE_MIN_WIDTH}
-        max={detailPaneMax}
-        defaultWidth={DETAIL_PANE_DEFAULT_WIDTH}
-        direction="left"
-        label="Resize package detail panel"
-        onChange={(w) => (ui.detailPaneWidth = w)}
-        onCommit={(w) => ui.setDetailPaneWidth(w)}
-      />
-      <PackageDetail />
+    {#if env.brewMissing}
+      <!-- Onboarding gate: brew is confirmed missing — replace the whole
+           shell (sidebar + sections + detail pane) with the setup view.
+           The env store polls brew_redetect every 2 s and flips this off
+           (plus loads the library) the moment the install lands. -->
+      <OnboardingView />
+    {:else}
+      <Sidebar />
+      <main class="content">
+        {#key ui.section}
+          <div class="section-pane">
+            {#if ui.section === "dashboard"}
+              <Dashboard />
+            {:else if ui.section === "library"}
+              <Library />
+            {:else if ui.section === "discover"}
+              <Discover />
+            {:else if ui.section === "trending"}
+              <Trending />
+            {:else if ui.section === "snapshots"}
+              <Snapshots />
+            {:else if ui.section === "services"}
+              <Services />
+            {:else if ui.section === "activity"}
+              <ActivityHistory />
+            {/if}
+          </div>
+        {/key}
+      </main>
+      {#if ui.selectedPackage}
+        <ResizeHandle
+          width={ui.detailPaneWidth}
+          min={DETAIL_PANE_MIN_WIDTH}
+          max={detailPaneMax}
+          defaultWidth={DETAIL_PANE_DEFAULT_WIDTH}
+          direction="left"
+          label="Resize package detail panel"
+          onChange={(w) => (ui.detailPaneWidth = w)}
+          onCommit={(w) => ui.setDetailPaneWidth(w)}
+        />
+        <PackageDetail />
+      {/if}
     {/if}
   </div>
   <ActivityDrawer />

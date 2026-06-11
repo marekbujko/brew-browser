@@ -275,6 +275,26 @@ impl AppState {
             .ok_or(BrewError::BrewNotFound)
     }
 
+    /// Overwrite the cached brew path. Split out from
+    /// [`Self::redetect_brew_path`] so tests can exercise the RwLock
+    /// update without depending on the host filesystem.
+    pub async fn set_brew_path(&self, path: Option<PathBuf>) {
+        let mut guard = self.brew_path.write().await;
+        *guard = path;
+    }
+
+    /// Re-run brew detection and write the result into `brew_path`.
+    /// Lets the app recover from a missing-brew startup without a
+    /// relaunch — the onboarding gate polls `brew_redetect` until the
+    /// user's Homebrew install lands on disk. Returns the freshly
+    /// detected path so the caller can build its status DTO without a
+    /// second lock acquisition.
+    pub async fn redetect_brew_path(&self) -> Option<PathBuf> {
+        let detected = resolve_brew_path();
+        self.set_brew_path(detected.clone()).await;
+        detected
+    }
+
     /// Consult paranoid mode + settings load state. Returns `Ok(())` if
     /// the outbound call is allowed, or `BrewError::ParanoidModeBlocked`
     /// otherwise. **Every outbound command must call this as its first
@@ -696,5 +716,36 @@ mod tests {
             }
             other => panic!("expected ParanoidModeBlocked from corrupt, got {other:?}"),
         }
+    }
+
+    // ---------- onboarding: set_brew_path / redetect_brew_path ----------
+
+    #[tokio::test]
+    async fn set_brew_path_updates_the_rwlock() {
+        let state = AppState::build().expect("AppState::build");
+        // Simulate a brew-less startup regardless of what build() found.
+        state.set_brew_path(None).await;
+        match state.require_brew_path().await {
+            Err(BrewError::BrewNotFound) => {}
+            other => panic!("expected BrewNotFound after set_brew_path(None), got {other:?}"),
+        }
+        // Setter round-trips an arbitrary path verbatim.
+        let p = PathBuf::from("/tmp/fake-brew-for-test");
+        state.set_brew_path(Some(p.clone())).await;
+        assert_eq!(state.require_brew_path().await.expect("path set"), p);
+    }
+
+    #[tokio::test]
+    async fn redetect_brew_path_writes_resolution_into_state() {
+        // `resolve_brew_path` is filesystem-bound, so we assert agreement
+        // rather than a fixed value: after forcing None, redetect must
+        // leave the RwLock holding exactly what the resolver returns
+        // (Some on a dev host with brew, None on a brew-less CI host).
+        let state = AppState::build().expect("AppState::build");
+        state.set_brew_path(None).await;
+        let detected = state.redetect_brew_path().await;
+        let cached = state.brew_path.read().await.clone();
+        assert_eq!(cached, detected, "redetect must write its result into brew_path");
+        assert_eq!(detected, resolve_brew_path());
     }
 }
