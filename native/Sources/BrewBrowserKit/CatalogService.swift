@@ -20,6 +20,11 @@ struct CatalogPackage: Identifiable, Hashable, Sendable {
     /// packages have a non-GitHub marketing homepage. nil when neither is GitHub.
     /// Mirrors the Tauri `githubHomepage` resolution. Default nil for previews.
     var githubHomepage: String? = nil
+    /// Offline deprecation/disabled baseline from the catalog (flags + reason +
+    /// date; NO replacement — the catalog never carries one). Drives the Discover
+    /// row badge + the AppModel token→status index that enriches Library rows.
+    /// Default clean for previews. Mirrors the Tauri `CatalogEntrySummary` flags.
+    var deprecation: DeprecationStatus = DeprecationStatus()
 }
 
 /// One package that depends on a queried target — a single reverse edge in the
@@ -354,7 +359,8 @@ actor CatalogService {
                 homepage: homepage,
                 version: version,
                 kind: .formula,
-                githubHomepage: resolveGithubHomepage(homepage: homepage, source: source)
+                githubHomepage: resolveGithubHomepage(homepage: homepage, source: source),
+                deprecation: parseDeprecationStatus(obj, includeReplacement: false)
             )
         }
     }
@@ -374,7 +380,8 @@ actor CatalogService {
                 homepage: homepage,
                 version: obj["version"] as? String ?? "—",
                 kind: .cask,
-                githubHomepage: resolveGithubHomepage(homepage: homepage, source: source)
+                githubHomepage: resolveGithubHomepage(homepage: homepage, source: source),
+                deprecation: parseDeprecationStatus(obj, includeReplacement: false)
             )
         }
     }

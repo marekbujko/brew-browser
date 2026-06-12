@@ -200,6 +200,10 @@ pub struct Cask {
     pub deprecation_reason: Option<String>,
     #[serde(default)]
     pub disabled: bool,
+    #[serde(default, alias = "disable_date")]
+    pub disable_date: Option<String>,
+    #[serde(default, alias = "disable_reason")]
+    pub disable_reason: Option<String>,
     pub version: Option<String>,
     pub tap: String,
     /// Formulae this cask requires, plucked from the nested upstream
@@ -817,5 +821,49 @@ mod tests {
         let wget = cat.formulae.get("wget").expect("wget must be in catalog");
         assert_eq!(wget.name, "wget");
         assert!(wget.versions_stable.is_some());
+    }
+
+    #[test]
+    fn cask_parses_disable_date_and_reason() {
+        // Feature #2 — Cask gained `disable_date` / `disable_reason` (Formula
+        // already had them; the cask struct was missing them). Verify the
+        // snake-case upstream input shape deserializes into the new fields.
+        let raw = r#"{
+            "token": "legacy-app",
+            "name": ["Legacy App"],
+            "desc": "An app that is going away",
+            "homepage": "https://example.com",
+            "deprecated": true,
+            "deprecation_date": "2024-01",
+            "deprecation_reason": "no longer maintained",
+            "disabled": true,
+            "disable_date": "2025-06",
+            "disable_reason": "removed upstream",
+            "version": "1.0.0",
+            "tap": "homebrew/cask"
+        }"#;
+        let c: Cask = serde_json::from_str(raw).expect("parse cask");
+        assert!(c.deprecated);
+        assert_eq!(c.deprecation_date.as_deref(), Some("2024-01"));
+        assert_eq!(c.deprecation_reason.as_deref(), Some("no longer maintained"));
+        assert!(c.disabled);
+        assert_eq!(c.disable_date.as_deref(), Some("2025-06"));
+        assert_eq!(c.disable_reason.as_deref(), Some("removed upstream"));
+    }
+
+    #[test]
+    fn bundled_catalog_has_disabled_formula_and_deprecated_cask() {
+        // Proves the deprecated/disabled flags plumb through real bundled
+        // data on BOTH namespaces — the offline baseline Feature #2 relies
+        // on. Names churn, so we only assert existence, never a specific token.
+        let cat = Catalog::load_bundled().expect("load bundled");
+        assert!(
+            cat.formulae.values().any(|f| f.disabled),
+            "bundled catalog should contain at least one disabled formula"
+        );
+        assert!(
+            cat.casks.values().any(|c| c.deprecated),
+            "bundled catalog should contain at least one deprecated cask"
+        );
     }
 }

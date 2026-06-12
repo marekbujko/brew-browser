@@ -319,6 +319,54 @@
   // — never offer an Install that can only fail with "macOS is required".
   let caskOnLinux = $derived(isLinux && ui.selectedPackage?.kind === "cask");
 
+  // ────────────────────────────────────────────────────────────────
+  // Feature #2 — deprecation / disabled notice.
+  //
+  // `pkg` comes from `brew info`, so it carries the richest data: flags,
+  // reason, date, AND the replacement token (the catalog has no
+  // replacement). `disabled` is the stronger state — when both are true
+  // the notice shows the disabled (danger) variant. A package with
+  // neither flag renders no notice (never a placeholder).
+  //
+  // The replacement is a clickable token routing via `ui.selectPackage`,
+  // which re-fetches `brew info` for it. We infer the replacement's kind
+  // the same way `openSimilar` does (loaded packages first, else formula
+  // — the catalog doesn't carry kind for an arbitrary token). On Linux a
+  // cask replacement still routes to detail, where the existing
+  // `caskOnLinux` gate suppresses the install action — same already-gated
+  // path, so no extra branch is needed here.
+  let deprecationNotice = $derived.by<
+    { kind: "deprecated" | "disabled"; reason: string | null; date: string | null; replacement: string | null } | null
+  >(() => {
+    if (!pkg) return null;
+    if (pkg.disabled) {
+      return {
+        kind: "disabled",
+        reason: pkg.disableReason,
+        date: pkg.disableDate,
+        replacement: pkg.disableReplacement,
+      };
+    }
+    if (pkg.deprecated) {
+      return {
+        kind: "deprecated",
+        reason: pkg.deprecationReason,
+        date: pkg.deprecationDate,
+        replacement: pkg.deprecationReplacement,
+      };
+    }
+    return null;
+  });
+
+  /** Jump to a deprecation replacement's detail. Same kind-inference as
+   *  {@link openSimilar} — the catalog doesn't carry the replacement's
+   *  kind, so prefer a loaded package, else default to formula. */
+  function openReplacement(token: string) {
+    const installed = packages.all.find((p) => p.name === token);
+    const kind = installed?.kind ?? "formula";
+    ui.selectPackage(token, kind);
+  }
+
   /** Categories assigned to this package (from `categories.json`). */
   let pkgCategories = $derived.by<string[]>(() => {
     if (!pkg) return [];
@@ -1103,6 +1151,48 @@
             <span class="truncate">{pkg.homepage}</span>
             <ExternalLink size={12} />
           </button>
+        {/if}
+
+        <!-- Feature #2: deprecation / disabled notice. Renders before the
+             Security card (mirrors the gh-archived notice pattern). Shows
+             the reason + date verbatim and, when brew info supplied a
+             replacement token, a clickable "use X instead" link that
+             re-fetches detail for the successor. `disabled` is the
+             stronger (danger) state; neither flag → no notice. -->
+        {#if deprecationNotice}
+          <div
+            class="deprecation-notice"
+            class:disabled={deprecationNotice.kind === "disabled"}
+            role="status"
+          >
+            <Archive size={14} aria-hidden="true" />
+            <div class="deprecation-body">
+              <p class="deprecation-line">
+                <strong>
+                  {deprecationNotice.kind === "disabled" ? "Disabled" : "Deprecated"}
+                </strong>{#if deprecationNotice.date}<span class="deprecation-date"> &middot; {deprecationNotice.date}</span>{/if}{#if deprecationNotice.reason}<span class="deprecation-reason"> — {deprecationNotice.reason}</span>{/if}
+              </p>
+              {#if deprecationNotice.kind === "disabled"}
+                <p class="deprecation-sub">No longer available via Homebrew.</p>
+              {:else}
+                <p class="deprecation-sub">May be removed in a future Homebrew update.</p>
+              {/if}
+              {#if deprecationNotice.replacement}
+                <p class="deprecation-replacement">
+                  Use
+                  <button
+                    type="button"
+                    class="deprecation-replacement-link"
+                    onclick={() => openReplacement(deprecationNotice!.replacement!)}
+                    title={`Open ${deprecationNotice.replacement}`}
+                  >
+                    {deprecationNotice.replacement}
+                  </button>
+                  instead.
+                </p>
+              {/if}
+            </div>
+          </div>
         {/if}
 
         <!-- v0.5.0: Security card. Three states branch off whether we
@@ -1998,6 +2088,55 @@
     border-radius: var(--radius-sm);
     color: var(--color-warning-strong);
   }
+
+  /* ── Feature #2: deprecation / disabled notice ──
+     Mirrors the .gh-archived warning card. Deprecated = warning (amber),
+     disabled = danger (red, the stronger state). Reason/date strings are
+     rendered verbatim; the replacement is a clickable link styled like an
+     inline button. */
+  .deprecation-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: var(--space-2) var(--space-3);
+    background: var(--color-warning-subtle);
+    border: 1px solid var(--color-warning, #f59e0b);
+    border-radius: var(--radius-md);
+    color: var(--color-warning-strong);
+    font-size: var(--text-body-sm);
+  }
+  .deprecation-notice :global(svg) { flex: none; margin-top: 2px; }
+  .deprecation-notice.disabled {
+    background: var(--color-danger-subtle);
+    border-color: var(--color-danger);
+    color: var(--color-danger-on-subtle, var(--color-danger));
+  }
+  .deprecation-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .deprecation-line { margin: 0; line-height: var(--lh-normal); }
+  .deprecation-line strong { font-weight: var(--fw-semibold); }
+  .deprecation-date { font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .deprecation-reason { opacity: 0.95; }
+  .deprecation-sub {
+    margin: 0;
+    font-size: var(--text-caption);
+    opacity: 0.85;
+  }
+  .deprecation-replacement {
+    margin: 2px 0 0 0;
+    color: var(--color-text-primary);
+  }
+  .deprecation-replacement-link {
+    display: inline;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    font-weight: var(--fw-semibold);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .deprecation-replacement-link:hover { text-decoration: none; }
   /* Render as a single flowing line: the icon is a flex child that
      doesn't shrink, and the whole sentence (including the inline <code>
      elements for license names) lives inside one span so it wraps as

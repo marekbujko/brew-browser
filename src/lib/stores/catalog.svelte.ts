@@ -33,6 +33,19 @@ import {
   type PackageKind,
 } from "$lib/types";
 
+/**
+ * Feature #2 — deprecation status for one token, derived from the
+ * bundled-catalog flags. `disabled` is the stronger state; callers
+ * pick the badge with `disabled` winning over `deprecated`. `reason`
+ * is the catalog reason string (offline baseline) — never a
+ * replacement token (the catalog has none).
+ */
+export interface PackageStatus {
+  deprecated: boolean;
+  disabled: boolean;
+  reason: string | null;
+}
+
 class CatalogStore {
   /** Last-known summary, or `null` until `ensureLoaded()` resolves. */
   summary: CatalogSummary | null = $state(null);
@@ -67,6 +80,13 @@ class CatalogStore {
    *  instead). */
   private versionByFormula: Map<string, string> | null = null;
   private versionByCask: Map<string, string> | null = null;
+  /** Feature #2 — per-token deprecation status maps, same population
+   *  path as the desc/version maps. Discover rows render off
+   *  `CatalogEntrySummary` (flags-only — no `Package`), so `statusOf()`
+   *  is the source for the row badge there. Keyed by token; `reason` is
+   *  the catalog reason string (offline baseline, no replacement). */
+  private statusByFormula: Map<string, PackageStatus> | null = null;
+  private statusByCask: Map<string, PackageStatus> | null = null;
   private summariesLoadPromise: Promise<void> | null = null;
 
   /** Lazy-load the catalog summary on first access. Safe to call from
@@ -146,26 +166,49 @@ class CatalogStore {
         ]);
         const fm = new Map<string, string>();
         const fv = new Map<string, string>();
+        const fs = new Map<string, PackageStatus>();
         for (const e of formulae) {
           if (e.desc) fm.set(e.name, e.desc);
           if (e.version) fv.set(e.name, e.version);
+          // Only store a status for tokens that actually carry a flag —
+          // keeps the map tiny (a few hundred of ~8k formulae) and a
+          // miss reads as "no badge", which is exactly right.
+          if (e.deprecated || e.disabled) {
+            fs.set(e.name, {
+              deprecated: e.deprecated,
+              disabled: e.disabled,
+              reason: (e.disabled ? e.disableReason : e.deprecationReason) ?? null,
+            });
+          }
         }
         const cm = new Map<string, string>();
         const cv = new Map<string, string>();
+        const cs = new Map<string, PackageStatus>();
         for (const e of casks) {
           if (e.desc) cm.set(e.name, e.desc);
           if (e.version) cv.set(e.name, e.version);
+          if (e.deprecated || e.disabled) {
+            cs.set(e.name, {
+              deprecated: e.deprecated,
+              disabled: e.disabled,
+              reason: (e.disabled ? e.disableReason : e.deprecationReason) ?? null,
+            });
+          }
         }
         this.descByFormula = fm;
         this.descByCask = cm;
         this.versionByFormula = fv;
         this.versionByCask = cv;
+        this.statusByFormula = fs;
+        this.statusByCask = cs;
       } catch {
         // Best-effort; subtitle fallback just stays null on failure.
         this.descByFormula = new Map();
         this.descByCask = new Map();
         this.versionByFormula = new Map();
         this.versionByCask = new Map();
+        this.statusByFormula = new Map();
+        this.statusByCask = new Map();
       } finally {
         this.summariesLoadPromise = null;
       }
@@ -200,6 +243,23 @@ class CatalogStore {
    */
   versionOf(name: string, kind: PackageKind): string | null {
     const map = kind === "formula" ? this.versionByFormula : this.versionByCask;
+    return map?.get(name) ?? map?.get(bareToken(name)) ?? null;
+  }
+
+  /**
+   * Feature #2 — sync per-token deprecation-status lookup. Returns the
+   * catalog status (deprecated/disabled flags + reason) for a flagged
+   * token, or `null` when the token isn't flagged (the common case) or
+   * the summary maps haven't loaded yet (caller should
+   * `ensureSummariesLoaded()` first).
+   *
+   * Discover rows render off `CatalogEntrySummary` (no `Package`), so
+   * this is the source for the row badge there. PackageDetail uses the
+   * richer `Package` flags from `brew info` instead (it also has the
+   * replacement token, which the catalog lacks).
+   */
+  statusOf(name: string, kind: PackageKind): PackageStatus | null {
+    const map = kind === "formula" ? this.statusByFormula : this.statusByCask;
     return map?.get(name) ?? map?.get(bareToken(name)) ?? null;
   }
 

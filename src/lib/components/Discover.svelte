@@ -64,6 +64,37 @@
     return enrichment.summaryOf(token) ?? catalog.descOf(token, kind);
   }
 
+  /**
+   * Deprecation / disabled badge for a Discover row (Feature #2). Discover
+   * rows render off `SearchHit` / category tokens (no `Package`), so the
+   * bundled-catalog status is the source — `catalog.statusOf()`. `disabled`
+   * wins over `deprecated` when both are set (the stronger danger state).
+   * Returns null when the token isn't flagged (no badge, no placeholder).
+   * Catalog-sourced → flags-only; the replacement "use X instead" link is
+   * PackageDetail-only (brew info carries it; the catalog doesn't).
+   */
+  function deprecationBadgeOf(
+    token: string,
+    kind: PackageKind,
+  ): { label: string; tone: "warning" | "danger"; title: string } | null {
+    const s = catalog.statusOf(token, kind);
+    if (!s) return null;
+    if (s.disabled) {
+      return {
+        label: "disabled",
+        tone: "danger",
+        title: s.reason ? `Disabled: ${s.reason}` : "Disabled — no longer available via Homebrew.",
+      };
+    }
+    return {
+      label: "deprecated",
+      tone: "warning",
+      title: s.reason
+        ? `Deprecated: ${s.reason}`
+        : "Deprecated — may be removed in a future Homebrew update.",
+    };
+  }
+
   async function refreshFromBanner() {
     const ok = await catalog.refresh();
     if (ok) {
@@ -272,7 +303,13 @@
               </span>
               <span class="desc truncate text-muted">{enrichment.summaryOf(h.name) ?? h.description ?? ""}</span>
               <span class="version truncate text-muted">{catalog.versionOf(h.name, h.kind) ?? ""}</span>
-              <span class="kind"><Pill tone={h.kind === "formula" ? "formula" : "cask"}>{h.kind}</Pill></span>
+              <span class="kind">
+                <Pill tone={h.kind === "formula" ? "formula" : "cask"}>{h.kind}</Pill>
+                {#if deprecationBadgeOf(h.name, h.kind)}
+                  {@const b = deprecationBadgeOf(h.name, h.kind)!}
+                  <span title={b.title}><Pill tone={b.tone}>{b.label}</Pill></span>
+                {/if}
+              </span>
               <span class="installed">
                 {#if installed}<Pill tone="success">installed</Pill>{/if}
               </span>
@@ -314,7 +351,13 @@
                 </span>
                 <span class="desc truncate text-muted">{descOf(h.name, h.kind) ?? ""}</span>
                 <span class="version truncate text-muted">{catalog.versionOf(h.name, h.kind) ?? ""}</span>
-                <span class="kind"><Pill tone={h.kind === "formula" ? "formula" : "cask"}>{h.kind}</Pill></span>
+                <span class="kind">
+                  <Pill tone={h.kind === "formula" ? "formula" : "cask"}>{h.kind}</Pill>
+                  {#if deprecationBadgeOf(h.name, h.kind)}
+                    {@const b = deprecationBadgeOf(h.name, h.kind)!}
+                    <span title={b.title}><Pill tone={b.tone}>{b.label}</Pill></span>
+                  {/if}
+                </span>
                 <span class="installed">
                   {#if installed}<Pill tone="success">installed</Pill>{/if}
                 </span>
@@ -577,6 +620,16 @@
     font-size: var(--text-body-sm);
     font-variant-numeric: tabular-nums;
     color: var(--color-text-secondary);
+  }
+  /* Kind cell hosts the type pill plus the optional deprecation/disabled
+     badge (Feature #2). Flex-wrap so a second pill drops below the kind
+     pill on the narrow 80px track rather than overflowing the cell. */
+  .kind {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    overflow: visible;
   }
   .installed { justify-self: end; min-width: 0; }
 

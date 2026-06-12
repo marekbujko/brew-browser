@@ -74,6 +74,25 @@ export interface Package {
   pinned: boolean;
   installedOnRequest: boolean;
   installedAsDependency: boolean;
+  /**
+   * Feature #2 — deprecation / disabled status. The flags + reason/date
+   * are the offline baseline (also on the bundled catalog, via
+   * {@link CatalogEntrySummary}); `brew info` additionally fills the
+   * replacement tokens below. `disabled` is the stronger state — when
+   * both are true the UI shows the disabled (danger) badge.
+   */
+  deprecated: boolean;
+  disabled: boolean;
+  deprecationDate: string | null;
+  deprecationReason: string | null;
+  disableDate: string | null;
+  disableReason: string | null;
+  /** "Use X instead" token for a deprecated package. Collapsed from
+   *  the upstream formula/cask replacement variants (formula preferred).
+   *  Only `brew info` carries this — always null on catalog-sourced rows. */
+  deprecationReplacement: string | null;
+  /** "Use X instead" token for a disabled package. `brew info` only. */
+  disableReplacement: string | null;
   iconSource: IconSource;
   /**
    * Canonical `https://github.com/<owner>/<repo>` URL when ANY of the
@@ -266,6 +285,12 @@ export interface CatalogEntrySummary {
   version: string | null;
   deprecated: boolean;
   disabled: boolean;
+  /** Feature #2 — catalog deprecation/disable reason (offline baseline).
+   *  Powers a status tooltip on list/Discover rows without a per-token
+   *  `brew info` lookup. The catalog never carries a replacement token —
+   *  that's `brew info`-only (see {@link Package.deprecationReplacement}). */
+  deprecationReason: string | null;
+  disableReason: string | null;
 }
 
 /**

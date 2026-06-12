@@ -100,6 +100,26 @@ pub struct Package {
     pub pinned: bool,
     pub installed_on_request: bool,
     pub installed_as_dependency: bool,
+    /// Feature #2 — deprecation / disabled status. The offline baseline
+    /// (`deprecated`/`disabled` + reason/date) comes from the bundled
+    /// catalog for every package; `brew info` enriches the same fields
+    /// AND adds the replacement token (the catalog has no replacement).
+    /// `disabled` is the stronger state — when both are true the UI shows
+    /// the disabled badge.
+    pub deprecated: bool,
+    pub disabled: bool,
+    pub deprecation_date: Option<String>,
+    pub deprecation_reason: Option<String>,
+    pub disable_date: Option<String>,
+    pub disable_reason: Option<String>,
+    /// "Use X instead" token for a deprecated package. Collapsed at parse
+    /// time from `deprecation_replacement_formula` / `_cask` (formula
+    /// preferred when both are non-null). Only `brew info` carries this —
+    /// always `None` on catalog-sourced packages.
+    pub deprecation_replacement: Option<String>,
+    /// "Use X instead" token for a disabled package. Collapsed from
+    /// `disable_replacement_formula` / `_cask`. `brew info` only.
+    pub disable_replacement: Option<String>,
     /// Hint to the frontend's icon layer about which command (if any)
     /// should be used to fetch a real icon for this row. See
     /// [`IconSource`] for the variants. Only meaningful for casks;
@@ -560,6 +580,14 @@ mod tests {
             pinned: false,
             installed_on_request: true,
             installed_as_dependency: false,
+            deprecated: false,
+            disabled: false,
+            deprecation_date: None,
+            deprecation_reason: None,
+            disable_date: None,
+            disable_reason: None,
+            deprecation_replacement: None,
+            disable_replacement: None,
             icon_source: IconSource::None,
             github_homepage: None,
         };
@@ -578,6 +606,14 @@ mod tests {
             "pinned",
             "installedOnRequest",
             "installedAsDependency",
+            "deprecated",
+            "disabled",
+            "deprecationDate",
+            "deprecationReason",
+            "disableDate",
+            "disableReason",
+            "deprecationReplacement",
+            "disableReplacement",
             "iconSource",
             "githubHomepage",
         ] {

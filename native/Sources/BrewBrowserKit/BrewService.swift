@@ -504,6 +504,11 @@ struct PackageInfo: Sendable, Hashable {
     let dependencies: [String]
     let buildDependencies: [String]
     let conflictsWith: [String]
+    /// Deprecation/disabled status from `brew info --json=v2` — the RICHER source
+    /// that also carries the replacement token ("use X instead"), which the
+    /// bundled catalog never has. Drives the detail panel's deprecation notice.
+    /// Mirrors the Tauri `Package` deprecation fields. Default clean.
+    var deprecation: DeprecationStatus = DeprecationStatus()
 
     var isOutdated: Bool {
         guard let i = installedVersion, let s = stableVersion else { return outdated }
@@ -534,7 +539,10 @@ extension BrewService {
         }
     }
 
-    private static func parseFormula(_ o: [String: Any]) -> PackageInfo {
+    // Internal (not private) so `BrewOutputParsingTests` can feed these the same
+    // decoded `brew info --json=v2` dicts the live `info(name:kind:)` path parses
+    // — keeping the deprecation mapping in lock-step with the Rust `to_package`.
+    static func parseFormula(_ o: [String: Any]) -> PackageInfo {
         let name = o["name"] as? String ?? o["full_name"] as? String ?? "?"
         let versions = o["versions"] as? [String: Any]
         let stable = versions?["stable"] as? String
@@ -565,11 +573,12 @@ extension BrewService {
             pinned: o["pinned"] as? Bool ?? false,
             dependencies: o["dependencies"] as? [String] ?? [],
             buildDependencies: o["build_dependencies"] as? [String] ?? [],
-            conflictsWith: o["conflicts_with"] as? [String] ?? []
+            conflictsWith: o["conflicts_with"] as? [String] ?? [],
+            deprecation: parseDeprecationStatus(o, includeReplacement: true)
         )
     }
 
-    private static func parseCask(_ o: [String: Any]) -> PackageInfo {
+    static func parseCask(_ o: [String: Any]) -> PackageInfo {
         // Casks: token, version (string), installed (string), name [array], desc.
         let token = o["token"] as? String ?? o["full_token"] as? String ?? "?"
         let nameArr = o["name"] as? [String]
@@ -595,7 +604,8 @@ extension BrewService {
             pinned: false,
             dependencies: [],
             buildDependencies: [],
-            conflictsWith: []
+            conflictsWith: [],
+            deprecation: parseDeprecationStatus(o, includeReplacement: true)
         )
     }
 

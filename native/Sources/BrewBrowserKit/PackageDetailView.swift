@@ -98,6 +98,7 @@ struct PackageDetailView: View {
                     if !model.detailCategories.isEmpty { categoriesRow }
                     if let tags = enrichment?.tags, !tags.isEmpty { tagsRow(tags) }
 
+                    deprecationCard
                     if AppSettings.shared.vulnerabilityScanningAllowed { securityCard }
                     serviceCard
                     if model.detailTrend != nil { trendCard }
@@ -260,6 +261,66 @@ struct PackageDetailView: View {
     }
 
     // MARK: security
+
+    // MARK: deprecation
+
+    /// Deprecation / disabled notice — renders before the Security card, mirroring
+    /// the Tauri PackageDetail notice block. Shows nothing when the package is
+    /// clean (never a placeholder). The status prefers `brew info` (the only
+    /// source of the "use X instead" replacement) and falls back to the offline
+    /// catalog baseline while info loads. `disabled` wins over `deprecated`
+    /// (danger vs. warning tone). Reason/date strings are rendered verbatim. The
+    /// replacement, when present, is a tappable chip that re-opens the inspector
+    /// on that token (brew info re-fetches; an unknown token hits the existing
+    /// detail error path). Feature #2.
+    @ViewBuilder private var deprecationCard: some View {
+        let status = model.detailDeprecation
+        if let badge = status.badge {
+            let isDisabled = badge == .disabled
+            let tone: Color = isDisabled ? .red : .orange
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(isDisabled
+                         ? "This package is disabled and is no longer available — it will be removed."
+                         : "This package is deprecated and scheduled for removal. It still installs for now.")
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let reason = status.activeReason, !reason.isEmpty {
+                        Text(reason)
+                            .font(.callout).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    if let date = status.activeDate, !date.isEmpty {
+                        Text(isDisabled ? "Disabled: \(date)" : "Deprecated: \(date)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let replacement = status.activeReplacement, !replacement.isEmpty {
+                        HStack(spacing: 6) {
+                            Text("Use instead:").font(.callout).foregroundStyle(.secondary)
+                            Button {
+                                // Most replacements share the deprecated package's
+                                // kind (formula→formula, cask→cask); openDetail
+                                // re-fetches brew info and the bare-name retry +
+                                // error path cover a kind/tap mismatch.
+                                model.openDetail(InstalledPackage(name: replacement, version: "—", kind: pkg.kind))
+                            } label: {
+                                Text(replacement).font(.callout)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(.quaternary, in: .capsule)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+            } label: {
+                Label(badge.label, systemImage: isDisabled ? "xmark.octagon" : "exclamationmark.triangle")
+                    .foregroundStyle(tone)
+            }
+        }
+    }
 
     @ViewBuilder private var securityCard: some View {
         GroupBox {
@@ -720,6 +781,39 @@ struct SeverityDot: View {
             .fill(color)
             .frame(width: 8, height: 8)
             .help("\(count) known vulnerabilit\(count == 1 ? "y" : "ies") (highest: \(severity.rawValue)). Click row to see details.")
+    }
+}
+
+/// Small deprecation/disabled badge for a list row — sits next to the name in
+/// the Library/Discover name cell, beside the vulnerability `SeverityDot`.
+/// `disabled` wins over `deprecated` (the AppModel rows already encode that in
+/// `DeprecationStatus.badge`), so this view just renders the resolved kind:
+/// "Disabled" in red (the package is gone / about to be removed), "Deprecated"
+/// in amber (still installable, but on its way out). Mirrors the Tauri PackageRow
+/// deprecation Pill (danger/warning tone). Feature #2.
+struct DeprecationBadge: View {
+    let kind: DeprecationBadgeKind
+    /// Catalog reason, when present — surfaced in the hover tooltip only (the
+    /// row stays compact; the full notice lives in the detail panel).
+    var reason: String? = nil
+
+    private var color: Color { kind == .disabled ? .red : .orange }
+
+    var body: some View {
+        Text(kind.label)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(color.opacity(0.18), in: .capsule)
+            .foregroundStyle(color)
+            .help(tooltip)
+    }
+
+    private var tooltip: String {
+        let base = kind == .disabled
+            ? "Disabled — this package is no longer available and will be removed."
+            : "Deprecated — still installable, but scheduled for removal."
+        if let reason, !reason.isEmpty { return "\(base)\n\(reason)" }
+        return base
     }
 }
 

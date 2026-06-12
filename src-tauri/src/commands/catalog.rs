@@ -71,6 +71,12 @@ pub struct CatalogEntrySummary {
     pub version: Option<String>,
     pub deprecated: bool,
     pub disabled: bool,
+    /// Feature #2 — catalog deprecation/disable reason (offline baseline).
+    /// Lets list/Discover surfaces show a status tooltip without a
+    /// per-token `brew info` round-trip. The catalog never carries a
+    /// replacement token — that's `brew info`-only (see `Package`).
+    pub deprecation_reason: Option<String>,
+    pub disable_reason: Option<String>,
 }
 
 /// One reverse-dependent of a queried package: a source that declares
@@ -380,6 +386,8 @@ pub async fn catalog_formulae_summary(
             version: f.versions_stable.clone(),
             deprecated: f.deprecated,
             disabled: f.disabled,
+            deprecation_reason: f.deprecation_reason.clone(),
+            disable_reason: f.disable_reason.clone(),
         })
         .collect();
     // Stable order so the frontend can rely on it for paging / virtualization.
@@ -409,6 +417,8 @@ pub async fn catalog_casks_summary(
             version: c.version.clone(),
             deprecated: c.deprecated,
             disabled: c.disabled,
+            deprecation_reason: c.deprecation_reason.clone(),
+            disable_reason: c.disable_reason.clone(),
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -824,6 +834,8 @@ mod tests {
             deprecation_date: None,
             deprecation_reason: None,
             disabled: false,
+            disable_date: None,
+            disable_reason: None,
             version: None,
             tap: "homebrew/cask".to_string(),
             depends_on_formula: Vec::new(),

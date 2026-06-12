@@ -255,6 +255,9 @@ struct DiscoverView: View {
                     if let severity = row.maxSeverity {
                         SeverityDot(severity: severity, count: row.vulnCount)
                     }
+                    if let badge = row.deprecation.badge {
+                        DeprecationBadge(kind: badge, reason: row.deprecation.activeReason)
+                    }
                 }
                 if !row.friendlyName.isEmpty {
                     Text(row.friendlyName).font(.caption).foregroundStyle(.secondary).lineLimit(1)

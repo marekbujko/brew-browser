@@ -62,6 +62,11 @@ struct LibraryRow: Identifiable, Hashable, Sendable {
     let maxSeverity: VulnSeverity?
     /// Number of known findings (any severity) — backs the dot's hover tooltip.
     let vulnCount: Int
+    /// Deprecation/disabled baseline, enriched from the bundled catalog by token.
+    /// Flags-only here (the catalog carries no replacement) — the detail panel
+    /// adds the replacement from brew info. Clean when the catalog isn't loaded
+    /// or the package isn't deprecated/disabled (no badge then). Feature #2.
+    let deprecation: DeprecationStatus
 
     /// Comparable proxy for sorting the Outdated column (`Bool` isn't
     /// `Comparable`). Outdated rows sort high so descending surfaces them first.
@@ -86,6 +91,9 @@ struct DiscoverRow: Identifiable, Hashable, Sendable {
     let maxSeverity: VulnSeverity?
     /// Number of known findings (any severity) — backs the dot's hover tooltip.
     let vulnCount: Int
+    /// Deprecation/disabled baseline from the catalog (flags-only; the catalog
+    /// is the row source for Discover, so it has no replacement). Feature #2.
+    let deprecation: DeprecationStatus
 
     var installedRank: Int { isInstalled ? 1 : 0 }
 }
@@ -201,7 +209,8 @@ public final class AppModel {
                 isOutdated: outdatedSet.contains(pkg.name),
                 summary: showSummary ? (entry?.summary ?? "") : "",
                 maxSeverity: (vuln?.total ?? 0) > 0 ? vuln?.maxSeverity : nil,
-                vulnCount: vuln?.total ?? 0
+                vulnCount: vuln?.total ?? 0,
+                deprecation: deprecationStatus(pkg.name, pkg.kind)
             )
         }
     }
@@ -315,7 +324,8 @@ public final class AppModel {
                 summary: showSummary ? (entry?.summary ?? pkg.desc) : pkg.desc,
                 isInstalled: installedIDs.contains("\(pkg.kind.rawValue):\(pkg.token)"),
                 maxSeverity: (vuln?.total ?? 0) > 0 ? vuln?.maxSeverity : nil,
-                vulnCount: vuln?.total ?? 0
+                vulnCount: vuln?.total ?? 0,
+                deprecation: pkg.deprecation
             )
         }
     }
@@ -351,8 +361,13 @@ public final class AppModel {
         // descriptions/versions blank.
         var byID: [String: CatalogPackage] = [:]
         byID.reserveCapacity(catalog.count)
-        for p in catalog { byID[p.id] = p }
+        var depByID: [String: DeprecationStatus] = [:]
+        for p in catalog {
+            byID[p.id] = p
+            if !p.deprecation.isClean { depByID[p.id] = p.deprecation }
+        }
         catalogByID = byID
+        deprecationByID = depByID
         catalogLoading = false
     }
 
@@ -388,8 +403,13 @@ public final class AppModel {
             catalog = await catalogService.all()
             var byID: [String: CatalogPackage] = [:]
             byID.reserveCapacity(catalog.count)
-            for p in catalog { byID[p.id] = p }
+            var depByID: [String: DeprecationStatus] = [:]
+            for p in catalog {
+                byID[p.id] = p
+                if !p.deprecation.isClean { depByID[p.id] = p.deprecation }
+            }
             catalogByID = byID
+            deprecationByID = depByID
             catalogSummary = summary
             // Rebuild the dashboard category breakdown against the fresh catalog.
             if !installed.isEmpty {
@@ -413,6 +433,23 @@ public final class AppModel {
     /// token+kind → catalog package, for joining desc/version/homepage onto
     /// Trending rows. Populated by `loadCatalog` (not lazily during render).
     private var catalogByID: [String: CatalogPackage] = [:]
+    /// "kind:token" → catalog deprecation status, for badging Library rows
+    /// (which are `brew list` `InstalledPackage`s with no catalog flags of their
+    /// own) and Discover rows from the offline baseline. Built alongside
+    /// `catalogByID` in `loadCatalog`/`refreshCatalogFromBrewSh`. The native
+    /// analogue of the Tauri catalog store's `deprecatedBy*`/`disabledBy*` maps.
+    private var deprecationByID: [String: DeprecationStatus] = [:]
+
+    /// Catalog deprecation/disabled status for a token+kind (offline baseline).
+    /// Bare-token fallback for tap-qualified names, mirroring `catalogLookup`.
+    /// Returns a clean status (no badge) when the catalog isn't loaded or the
+    /// package isn't flagged. The native analogue of the Tauri `statusOf`.
+    func deprecationStatus(_ token: String, _ kind: InstalledPackage.Kind) -> DeprecationStatus {
+        if let hit = deprecationByID["\(kind.rawValue):\(token)"] { return hit }
+        let bare = Self.bareToken(token)
+        if bare != token, let hit = deprecationByID["\(kind.rawValue):\(bare)"] { return hit }
+        return DeprecationStatus()
+    }
     /// Homebrew analytics report tap formulae fully-qualified (`user/tap/name`),
     /// but the bundled catalog + enrichment are keyed by the bare name. Returns
     /// the last `/`-segment; bare tokens pass through unchanged.
@@ -1189,6 +1226,18 @@ public final class AppModel {
         // changed) and pull newer categories. Both no-op unless opted in.
         resetLiveEnrichment()
         await refreshLiveCategoriesIfNewer()
+    }
+
+    /// Deprecation status for the OPEN detail package: prefer the brew-info
+    /// status (the only source with the "use X instead" replacement), falling
+    /// back to the offline catalog baseline while `brew info` is still loading or
+    /// when the package wasn't found there. Mirrors the Tauri PackageDetail,
+    /// where the row baseline shows immediately and the replacement appears once
+    /// brew info resolves. Clean (no notice) when neither source flags it.
+    var detailDeprecation: DeprecationStatus {
+        if let info = detailInfo, !info.deprecation.isClean { return info.deprecation }
+        guard let pkg = detailPackage else { return DeprecationStatus() }
+        return deprecationStatus(pkg.name, pkg.kind)
     }
 
     // MARK: - Package detail

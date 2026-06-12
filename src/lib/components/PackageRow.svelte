@@ -61,6 +61,36 @@
     return `${n} known vulnerabilit${n === 1 ? "y" : "ies"} (highest: ${vulnMaxSeverity}). Click row to see details.`;
   });
 
+  // ── Deprecation / disabled badge (Feature #2) ──
+  //
+  // Library rows are `Package`, so the flags ride along from `brew info`.
+  // `disabled` is the stronger state and wins the badge when both are set
+  // (the formula is gone / about to be removed → danger tone). A package
+  // with neither flag shows nothing — never a placeholder.
+  const deprecationBadge = $derived.by<
+    { label: string; tone: "warning" | "danger"; title: string } | null
+  >(() => {
+    if (pkg.disabled) {
+      return {
+        label: "disabled",
+        tone: "danger",
+        title: pkg.disableReason
+          ? `Disabled: ${pkg.disableReason}`
+          : "Disabled — no longer available via Homebrew.",
+      };
+    }
+    if (pkg.deprecated) {
+      return {
+        label: "deprecated",
+        tone: "warning",
+        title: pkg.deprecationReason
+          ? `Deprecated: ${pkg.deprecationReason}`
+          : "Deprecated — may be removed in a future Homebrew update.",
+      };
+    }
+    return null;
+  });
+
   /** AI-enriched friendly name for this row's token, or null when the
    *  AI Features toggle is off / no enrichment entry. Called inline in
    *  markup — the underlying enrichment.friendlyName() is a sync Map.get(),
@@ -105,6 +135,13 @@
   <span class="kind">
     {#if !isLinux}
       <Pill tone={pkg.kind === "formula" ? "formula" : "cask"}>{pkg.kind}</Pill>
+    {/if}
+    {#if deprecationBadge}
+      <!-- Deprecation / disabled badge (Feature #2). Lives next to the
+           kind pill; formula deprecation renders identically on Linux. -->
+      <span title={deprecationBadge.title}>
+        <Pill tone={deprecationBadge.tone}>{deprecationBadge.label}</Pill>
+      </span>
     {/if}
     {#if vulnMaxSeverity !== null}
       <!-- Severity dot — colour wins by max severity. Hover tooltip
