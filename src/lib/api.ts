@@ -26,6 +26,7 @@ import type {
   Cask,
   CatalogEntrySummary,
   CatalogSummary,
+  ReverseDependents,
   CategoriesData,
   CreatedIssue,
   DeviceFlowPoll,
@@ -392,6 +393,17 @@ export function catalogFormulaeSummary(): Promise<CatalogEntrySummary[]> {
 /** Light per-entry list of every cask in the active catalog. */
 export function catalogCasksSummary(): Promise<CatalogEntrySummary[]> {
   return invoke<CatalogEntrySummary[]>("catalog_casks_summary");
+}
+
+/**
+ * Reverse dependencies — every catalog entry that depends on `name`.
+ * Pure catalog-graph inversion (no `brew` subprocess, no network). Cask
+ * dependents are included only on macOS (the backend gates them behind
+ * `cfg!(target_os = "macos")`); on Linux the result is the
+ * formula→formula graph alone.
+ */
+export function catalogReverseDependents(name: string): Promise<ReverseDependents> {
+  return invoke<ReverseDependents>("catalog_reverse_dependents", { name });
 }
 
 // ============================================================

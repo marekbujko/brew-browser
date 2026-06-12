@@ -269,6 +269,37 @@ export interface CatalogEntrySummary {
 }
 
 /**
+ * One reverse-dependent of a queried package — a catalog entry that
+ * declares the queried token in one of its dependency arrays (or, for a
+ * cask, in `depends_on.formula`). Returned inside {@link ReverseDependents}
+ * by `catalog_reverse_dependents`. Wire shape mirrors the Rust
+ * `ReverseDependent` struct (camelCase).
+ */
+export interface ReverseDependent {
+  /** Name (formula) or token (cask) of the dependent. */
+  name: string;
+  /** Whether the dependent is a formula or a cask. Cask dependents only
+   *  ever appear on macOS — the backend folds them in under
+   *  `cfg!(target_os = "macos")`. */
+  kind: "formula" | "cask";
+  /** How the dependent declares the edge. Cask edges are always
+   *  "required". */
+  edge: "required" | "build" | "recommended" | "optional";
+}
+
+/**
+ * Reverse-dependents payload for one queried token. Returned by
+ * `catalog_reverse_dependents`. `dependents` is deduped by (name, kind)
+ * keeping the strongest edge, sorted ascending by name; empty when
+ * nothing in the catalog depends on the queried token.
+ */
+export interface ReverseDependents {
+  /** The queried token, echoed back. */
+  name: string;
+  dependents: ReverseDependent[];
+}
+
+/**
  * Full formula record from the bundled / user-refreshed catalog.
  * Mirrors the Rust `Formula` struct in `src-tauri/src/catalog/mod.rs`.
  * Nullable fields are skipped on the wire when `None` (per

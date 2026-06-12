@@ -73,7 +73,146 @@ pub struct CatalogEntrySummary {
     pub disabled: bool,
 }
 
+/// One reverse-dependent of a queried package: a source that declares
+/// the queried token in one of its dependency arrays (or, for a cask,
+/// in `depends_on.formula`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReverseDependent {
+    /// Name (formula) or token (cask) of the dependent.
+    pub name: String,
+    /// "formula" or "cask".
+    pub kind: ReverseDependentKind,
+    /// How the dependent declares the edge.
+    pub edge: ReverseDependentEdge,
+}
+
+/// Whether a reverse-dependent is a formula or a cask. Casks can depend
+/// on formulae (via `depends_on.formula`); the reverse never occurs in
+/// this dataset, so a cask's own reverse set is always empty.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ReverseDependentKind {
+    Formula,
+    Cask,
+}
+
+/// The dependency relationship that links a dependent to the queried
+/// target. A cask edge is always classified `Required` (a cask's
+/// `depends_on.formula` is a hard runtime requirement) but is
+/// distinguished by `ReverseDependentKind::Cask`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReverseDependentEdge {
+    Required,
+    Build,
+    Recommended,
+    Optional,
+}
+
+impl ReverseDependentEdge {
+    /// Deterministic precedence for dedupe — when a single source
+    /// declares the target in multiple arrays we keep the *strongest*
+    /// edge. Lower number = stronger. Mirrors the parity contract:
+    /// required > recommended > build > optional.
+    fn precedence(self) -> u8 {
+        match self {
+            ReverseDependentEdge::Required => 0,
+            ReverseDependentEdge::Recommended => 1,
+            ReverseDependentEdge::Build => 2,
+            ReverseDependentEdge::Optional => 3,
+        }
+    }
+}
+
+/// Full reverse-dependents payload for one queried token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReverseDependents {
+    /// The token that was queried (echoed back for the UI).
+    pub name: String,
+    /// Dependents, deduped by (name, kind) keeping the strongest edge,
+    /// sorted ascending by name. Empty when nothing depends on the
+    /// queried token (honest leaf-node state).
+    pub dependents: Vec<ReverseDependent>,
+}
+
 // ---------- Helpers ----------
+
+/// Pure catalog-graph inversion. Returns every source that declares
+/// `target` in a dependency array, classified by edge type, deduped by
+/// (name, kind) keeping the strongest edge, and sorted ascending by
+/// name.
+///
+/// `include_casks` controls whether cask `depends_on.formula` edges are
+/// folded in — the caller passes `cfg!(target_os = "macos")` so the
+/// cask surface is a macOS-only superset (casks are unavailable on
+/// Linux). Formula→formula edges are always included.
+///
+/// Self-loops (a malformed record listing itself) are excluded. The
+/// scan is a single linear pass over the catalog rather than a cached
+/// inverted index: at ~8.4k formulae it is sub-millisecond, and an
+/// on-demand pass avoids any `AppState` mutation or memoization
+/// bookkeeping.
+fn invert_dependents(catalog: &Catalog, target: &str, include_casks: bool) -> Vec<ReverseDependent> {
+    use std::collections::HashMap;
+
+    // Keyed by (name, kind) so a formula and a (hypothetical) cask of
+    // the same name stay distinct. Value is the strongest edge seen.
+    let mut best: HashMap<(String, ReverseDependentKind), ReverseDependentEdge> = HashMap::new();
+
+    let mut consider = |source: &str, kind: ReverseDependentKind, edge: ReverseDependentEdge| {
+        // Exclude self-loops — a record listing itself is malformed
+        // catalog data, not a real dependency.
+        if source == target {
+            return;
+        }
+        let key = (source.to_string(), kind);
+        best.entry(key)
+            .and_modify(|existing| {
+                if edge.precedence() < existing.precedence() {
+                    *existing = edge;
+                }
+            })
+            .or_insert(edge);
+    };
+
+    for f in catalog.formulae.values() {
+        if f.dependencies.iter().any(|d| d == target) {
+            consider(&f.name, ReverseDependentKind::Formula, ReverseDependentEdge::Required);
+        }
+        if f.build_dependencies.iter().any(|d| d == target) {
+            consider(&f.name, ReverseDependentKind::Formula, ReverseDependentEdge::Build);
+        }
+        if f.recommended_dependencies.iter().any(|d| d == target) {
+            consider(&f.name, ReverseDependentKind::Formula, ReverseDependentEdge::Recommended);
+        }
+        if f.optional_dependencies.iter().any(|d| d == target) {
+            consider(&f.name, ReverseDependentKind::Formula, ReverseDependentEdge::Optional);
+        }
+    }
+
+    if include_casks {
+        for c in catalog.casks.values() {
+            if c.depends_on_formula.iter().any(|d| d == target) {
+                consider(&c.token, ReverseDependentKind::Cask, ReverseDependentEdge::Required);
+            }
+        }
+    }
+
+    let mut out: Vec<ReverseDependent> = best
+        .into_iter()
+        .map(|((name, kind), edge)| ReverseDependent { name, kind, edge })
+        .collect();
+    // Sort ascending by name, then kind, for a stable UI order even when
+    // a formula and cask share a name.
+    out.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| (a.kind as u8).cmp(&(b.kind as u8)))
+    });
+    out
+}
 
 fn summarize(catalog: &Catalog) -> CatalogSummary {
     let days_old = compute_days_old(&catalog.as_of);
@@ -274,6 +413,29 @@ pub async fn catalog_casks_summary(
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+/// Reverse dependencies — every package in the catalog that depends on
+/// `name`. Pure catalog-graph inversion: no `brew` subprocess, no
+/// network, arch-independent for the formula→formula graph.
+///
+/// Cask dependents (a cask requiring this formula via
+/// `depends_on.formula`) are a macOS-only superset — folded in only
+/// under `cfg!(target_os = "macos")`, mirroring `catalog_casks_summary`.
+/// On Linux the result is the formula→formula graph alone, which is
+/// byte-identical to the macOS formula-graph result.
+#[tauri::command]
+pub async fn catalog_reverse_dependents(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<ReverseDependents, BrewError> {
+    // Defense in depth — the lookup is an in-memory scan with no path
+    // composition, but validate so the IPC boundary stays uniform.
+    validate_package_name(&name)?;
+    let catalog = read_active_catalog(&state).await;
+    let include_casks = cfg!(target_os = "macos");
+    let dependents = invert_dependents(&catalog, &name, include_casks);
+    Ok(ReverseDependents { name, dependents })
 }
 
 // ---------- Auto-refresh (Phase 13 — Finding 2) ----------
@@ -620,6 +782,221 @@ mod tests {
                 r
             );
         }
+    }
+
+    // ---------- Reverse dependents (Feature #1) ----------
+
+    use crate::catalog::{Cask, Formula};
+
+    /// Minimal formula with just the fields the inversion reads. All
+    /// dependency arrays default empty; callers fill what they need.
+    fn fixture_formula(name: &str) -> Formula {
+        Formula {
+            name: name.to_string(),
+            full_name: name.to_string(),
+            desc: None,
+            homepage: None,
+            license: None,
+            deprecated: false,
+            deprecation_date: None,
+            deprecation_reason: None,
+            disabled: false,
+            disable_date: None,
+            disable_reason: None,
+            dependencies: Vec::new(),
+            build_dependencies: Vec::new(),
+            recommended_dependencies: Vec::new(),
+            optional_dependencies: Vec::new(),
+            conflicts_with: Vec::new(),
+            versions_stable: None,
+            tap: "homebrew/core".to_string(),
+            aliases: Vec::new(),
+        }
+    }
+
+    fn fixture_cask(token: &str) -> Cask {
+        Cask {
+            token: token.to_string(),
+            name: Vec::new(),
+            desc: None,
+            homepage: None,
+            deprecated: false,
+            deprecation_date: None,
+            deprecation_reason: None,
+            disabled: false,
+            version: None,
+            tap: "homebrew/cask".to_string(),
+            depends_on_formula: Vec::new(),
+        }
+    }
+
+    /// Build a small in-memory catalog from the given formulae + casks.
+    fn fixture_catalog(formulae: Vec<Formula>, casks: Vec<Cask>) -> Catalog {
+        use std::collections::HashMap;
+        let mut fmap = HashMap::new();
+        for f in formulae {
+            fmap.insert(f.name.clone(), f);
+        }
+        let mut cmap = HashMap::new();
+        for c in casks {
+            cmap.insert(c.token.clone(), c);
+        }
+        Catalog {
+            formula_count: fmap.len(),
+            cask_count: cmap.len(),
+            formulae: fmap,
+            casks: cmap,
+            as_of: "2026-06-12T00:00:00Z".to_string(),
+            source: CatalogSource::Bundled,
+            corrupt: false,
+        }
+    }
+
+    #[test]
+    fn invert_returns_required_dependents() {
+        let mut wget = fixture_formula("wget");
+        wget.dependencies = vec!["openssl@3".to_string(), "gettext".to_string()];
+        let mut curl = fixture_formula("curl");
+        curl.dependencies = vec!["openssl@3".to_string()];
+        let cat = fixture_catalog(vec![wget, curl, fixture_formula("openssl@3")], vec![]);
+
+        let deps = invert_dependents(&cat, "openssl@3", true);
+        let names: Vec<&str> = deps.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["curl", "wget"]);
+        assert!(deps.iter().all(|d| d.edge == ReverseDependentEdge::Required));
+        assert!(deps.iter().all(|d| d.kind == ReverseDependentKind::Formula));
+    }
+
+    #[test]
+    fn invert_classifies_build_edge() {
+        let mut wget = fixture_formula("wget");
+        wget.build_dependencies = vec!["pkgconf".to_string()];
+        let cat = fixture_catalog(vec![wget, fixture_formula("pkgconf")], vec![]);
+
+        let deps = invert_dependents(&cat, "pkgconf", true);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].name, "wget");
+        assert_eq!(deps[0].edge, ReverseDependentEdge::Build);
+    }
+
+    #[test]
+    fn invert_classifies_recommended_and_optional_distinctly() {
+        let mut a = fixture_formula("a");
+        a.recommended_dependencies = vec!["libfoo".to_string()];
+        let mut b = fixture_formula("b");
+        b.optional_dependencies = vec!["libfoo".to_string()];
+        let cat = fixture_catalog(vec![a, b, fixture_formula("libfoo")], vec![]);
+
+        let deps = invert_dependents(&cat, "libfoo", true);
+        let a_edge = deps.iter().find(|d| d.name == "a").unwrap().edge;
+        let b_edge = deps.iter().find(|d| d.name == "b").unwrap().edge;
+        assert_eq!(a_edge, ReverseDependentEdge::Recommended);
+        assert_eq!(b_edge, ReverseDependentEdge::Optional);
+    }
+
+    #[test]
+    fn invert_leaf_with_no_dependents_is_empty() {
+        let cat = fixture_catalog(vec![fixture_formula("loner")], vec![]);
+        let deps = invert_dependents(&cat, "loner", true);
+        assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn invert_excludes_self_loop() {
+        // A malformed record listing itself must not appear in its own
+        // reverse set.
+        let mut weird = fixture_formula("weird");
+        weird.dependencies = vec!["weird".to_string()];
+        let cat = fixture_catalog(vec![weird], vec![]);
+        let deps = invert_dependents(&cat, "weird", true);
+        assert!(deps.is_empty(), "self-loop must be excluded");
+    }
+
+    #[test]
+    fn invert_dedupes_with_required_over_build_precedence() {
+        // A source that lists the target in BOTH dependencies and
+        // build_dependencies dedupes to a single entry keeping the
+        // stronger (required) edge.
+        let mut src = fixture_formula("src");
+        src.dependencies = vec!["target".to_string()];
+        src.build_dependencies = vec!["target".to_string()];
+        let cat = fixture_catalog(vec![src, fixture_formula("target")], vec![]);
+
+        let deps = invert_dependents(&cat, "target", true);
+        assert_eq!(deps.len(), 1, "duplicate source must dedupe");
+        assert_eq!(deps[0].edge, ReverseDependentEdge::Required);
+    }
+
+    #[test]
+    fn invert_cask_depends_on_formula_produces_cask_dependent() {
+        let mut aptible = fixture_cask("aptible");
+        aptible.depends_on_formula = vec!["libfido2".to_string()];
+        let cat = fixture_catalog(vec![fixture_formula("libfido2")], vec![aptible]);
+
+        let deps = invert_dependents(&cat, "libfido2", true);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].name, "aptible");
+        assert_eq!(deps[0].kind, ReverseDependentKind::Cask);
+        assert_eq!(deps[0].edge, ReverseDependentEdge::Required);
+    }
+
+    #[test]
+    fn invert_omits_casks_when_include_casks_false() {
+        // Linux path: cask edges are excluded so the result is the
+        // formula→formula graph alone.
+        let mut aptible = fixture_cask("aptible");
+        aptible.depends_on_formula = vec!["libfido2".to_string()];
+        let cat = fixture_catalog(vec![fixture_formula("libfido2")], vec![aptible]);
+
+        let deps = invert_dependents(&cat, "libfido2", false);
+        assert!(deps.is_empty(), "cask edge must be omitted when include_casks=false");
+    }
+
+    #[test]
+    fn invert_output_sorted_by_name() {
+        let mut zeta = fixture_formula("zeta");
+        zeta.dependencies = vec!["t".to_string()];
+        let mut alpha = fixture_formula("alpha");
+        alpha.dependencies = vec!["t".to_string()];
+        let mut mid = fixture_formula("mid");
+        mid.dependencies = vec!["t".to_string()];
+        let cat = fixture_catalog(vec![zeta, alpha, mid, fixture_formula("t")], vec![]);
+
+        let deps = invert_dependents(&cat, "t", true);
+        let names: Vec<&str> = deps.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "mid", "zeta"]);
+    }
+
+    #[test]
+    fn invert_real_bundled_high_fan_in_nonempty() {
+        // openssl@3 is depended on by thousands of formulae in the real
+        // bundled snapshot. Synthetic leaf returns empty.
+        let cat = Catalog::load_bundled().expect("load bundled");
+        let deps = invert_dependents(&cat, "openssl@3", true);
+        assert!(
+            deps.len() > 100,
+            "openssl@3 should have a large reverse-dependent set, got {}",
+            deps.len()
+        );
+        // Sorted ascending — verify the invariant holds on real data.
+        for w in deps.windows(2) {
+            assert!(w[0].name <= w[1].name, "reverse-dependents must be sorted by name");
+        }
+
+        let leaf = invert_dependents(&cat, "this-is-not-a-real-formula-xyzzy", true);
+        assert!(leaf.is_empty(), "unknown token yields empty set");
+    }
+
+    #[test]
+    fn invert_real_bundled_cask_dependent_present() {
+        // The real catalog has 28 casks carrying depends_on.formula;
+        // libfido2 is one such target (cask `aptible`).
+        let cat = Catalog::load_bundled().expect("load bundled");
+        let deps = invert_dependents(&cat, "libfido2", true);
+        assert!(
+            deps.iter().any(|d| d.kind == ReverseDependentKind::Cask),
+            "libfido2 should have at least one cask dependent in the bundled snapshot"
+        );
     }
 
     // ---------- Auto-refresh schedule (Phase 13 — Finding 2) ----------

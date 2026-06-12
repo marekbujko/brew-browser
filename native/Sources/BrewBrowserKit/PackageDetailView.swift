@@ -106,6 +106,7 @@ struct PackageDetailView: View {
                     if AppSettings.shared.githubAllowed, model.detailRepoStats != nil { githubCard }
                     if let caveats = info?.caveats, !caveats.isEmpty { caveatsCard(caveats) }
                     dependenciesSection
+                    dependentsSection
                 }
             }
             .padding(16)
@@ -589,6 +590,42 @@ struct PackageDetailView: View {
             DisclosureGroup("Conflicts with (\(info.conflictsWith.count))") {
                 FlowRow(spacing: 6) {
                     ForEach(info.conflictsWith, id: \.self) { Chip(text: $0) }
+                }
+            }
+        }
+    }
+
+    /// "Required by" — catalog packages that depend on this one (reverse edges of
+    /// the dependency graph, inverted from the same bundled catalog). Buttons
+    /// navigate to the dependent's detail, exactly like the Similar-packages
+    /// pills. Honest empty state: the whole section is omitted when nothing in
+    /// the catalog depends on this package. A DisclosureGroup keeps high-fan-in
+    /// targets (e.g. `openssl@3` with thousands of dependents) collapsible,
+    /// mirroring the Dependencies disclosure.
+    @ViewBuilder private var dependentsSection: some View {
+        let dependents = model.detailDependents
+        if !dependents.isEmpty {
+            DisclosureGroup("Required by (\(dependents.count))") {
+                FlowRow(spacing: 6) {
+                    ForEach(dependents) { dep in
+                        Button {
+                            model.openDetail(InstalledPackage(name: dep.name, version: "—", kind: dep.kind))
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(dep.name)
+                                if dep.edge != .required {
+                                    Text(dep.edge.rawValue)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                } else if dep.kind == .cask {
+                                    Image(systemName: "shippingbox").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(.quaternary, in: .capsule)
+                    }
                 }
             }
         }

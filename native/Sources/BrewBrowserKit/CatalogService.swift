@@ -22,6 +22,119 @@ struct CatalogPackage: Identifiable, Hashable, Sendable {
     var githubHomepage: String? = nil
 }
 
+/// One package that depends on a queried target — a single reverse edge in the
+/// catalog dependency graph. The native mirror of the Tauri
+/// `catalog_reverse_dependents` row (parity charter: same bundled JSON, same
+/// inversion rules, same data contract). `name`+`kind` identify the dependent;
+/// `edge` classifies *how* it depends on the target.
+struct ReverseDependent: Identifiable, Hashable, Sendable {
+    var id: String { "\(kind.rawValue):\(name)" }
+    /// Homebrew token of the dependent (the package that lists the target).
+    let name: String
+    /// formula vs cask — a cask depends on a formula via `depends_on.formula`.
+    let kind: InstalledPackage.Kind
+    /// How the dependent references the target.
+    let edge: Edge
+
+    /// Classification of a reverse edge, by the catalog array it came from.
+    /// Precedence (strongest → weakest) for deduping a source that lists the
+    /// target in several arrays: required > recommended > build > optional.
+    /// Matches the Tauri edge contract exactly.
+    enum Edge: String, Sendable, CaseIterable {
+        case required, recommended, build, optional
+
+        /// Lower rank = stronger edge (kept when deduping).
+        var rank: Int {
+            switch self {
+            case .required: return 0
+            case .recommended: return 1
+            case .build: return 2
+            case .optional: return 3
+            }
+        }
+    }
+}
+
+/// Pure inversion of the catalog forward-dependency graph into a
+/// target → [dependent] map. Free function so both the live loader and the
+/// unit tests feed it the same raw decoded JSON dicts (the very shape
+/// `formulae(from:)` / `casks(from:)` already receive). No I/O, no subprocess —
+/// arch-independent catalog-graph inversion.
+///
+/// Inversion rules (must match the Tauri `invert_dependents`):
+///   source S is a dependent of target T iff T appears in
+///     S.dependencies              → .required
+///     S.build_dependencies        → .build
+///     S.recommended_dependencies  → .recommended
+///     S.optional_dependencies     → .optional
+///   or S is a cask and T ∈ S.depends_on.formula → .required (kind .cask)
+/// Self-loops are excluded. Edges are keyed on the exact (bare) token present.
+/// Per (target) the dependents are deduped by (name,kind) keeping the strongest
+/// edge, then sorted ascending by name (stable for the UI).
+func buildReverseDependentsIndex(
+    formulae: [[String: Any]],
+    casks: [[String: Any]]
+) -> [String: [ReverseDependent]] {
+    // Accumulate raw edges per target; dedupe + sort at the end.
+    var raw: [String: [ReverseDependent]] = [:]
+
+    func add(target: String, dependent: ReverseDependent) {
+        guard !target.isEmpty, target != dependent.name || dependent.kind != .formula else { return }
+        raw[target, default: []].append(dependent)
+    }
+
+    for obj in formulae {
+        guard let source = obj["name"] as? String else { continue }
+        let edges: [(String, ReverseDependent.Edge)] = [
+            ("dependencies", .required),
+            ("build_dependencies", .build),
+            ("recommended_dependencies", .recommended),
+            ("optional_dependencies", .optional),
+        ]
+        for (key, edge) in edges {
+            guard let targets = obj[key] as? [String] else { continue }
+            for target in targets {
+                add(target: target,
+                    dependent: ReverseDependent(name: source, kind: .formula, edge: edge))
+            }
+        }
+    }
+
+    for obj in casks {
+        guard let source = obj["token"] as? String,
+              let dependsOn = obj["depends_on"] as? [String: Any] else { continue }
+        // `depends_on.formula` is sometimes a string, sometimes an array.
+        let targets: [String]
+        if let arr = dependsOn["formula"] as? [String] {
+            targets = arr
+        } else if let one = dependsOn["formula"] as? String {
+            targets = [one]
+        } else {
+            continue
+        }
+        for target in targets {
+            // A cask depending on a formula is a required edge for that formula.
+            add(target: target,
+                dependent: ReverseDependent(name: source, kind: .cask, edge: .required))
+        }
+    }
+
+    // Dedupe by (name,kind) keeping the strongest edge, then sort by name.
+    var out: [String: [ReverseDependent]] = [:]
+    out.reserveCapacity(raw.count)
+    for (target, deps) in raw {
+        var best: [String: ReverseDependent] = [:]
+        for d in deps {
+            if let prev = best[d.id], prev.edge.rank <= d.edge.rank { continue }
+            best[d.id] = d
+        }
+        out[target] = best.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+    return out
+}
+
 /// Canonicalize any URL containing `github.com/<owner>/<repo>` to
 /// `https://github.com/<owner>/<repo>`, or nil. Free function so both loaders
 /// and tests can use it.
@@ -67,6 +180,10 @@ actor CatalogService {
     private var cache: [CatalogPackage]?
     /// Cached active-catalog summary (bundled OR the user-refreshed copy).
     private var summaryCache: CatalogSummary?
+    /// Cached reverse-dependents index (target token → sorted dependents).
+    /// Built once on first ``reverseDependents(of:)`` from the same raw JSON
+    /// dicts the package loaders read (prefers the user-refreshed copy).
+    private var reverseIndexCache: [String: [ReverseDependent]]?
 
     init() {}
 
@@ -169,7 +286,45 @@ actor CatalogService {
             daysOld: 0
         )
         summaryCache = summary
+        reverseIndexCache = buildReverseDependentsIndex(formulae: formulaArr, casks: caskArr)
         return summary
+    }
+
+    // MARK: - Reverse dependents
+
+    /// Packages in the catalog that depend on `token` (the reverse edges of the
+    /// dependency graph), deduped + sorted by name. Builds the inverted index on
+    /// first call from the same raw JSON dicts the loaders read (user-refreshed
+    /// copy preferred over bundled), then serves from memory. Returns [] for a
+    /// leaf, an unknown token, or a corrupt/empty catalog — never throws. The
+    /// queried token is matched on its bare form (`user/tap/name` → `name`),
+    /// since the catalog keys forward edges by bare token.
+    func reverseDependents(of token: String) async -> [ReverseDependent] {
+        let index = ensureReverseIndex()
+        if let hit = index[token] { return hit }
+        let bare = token.split(separator: "/").last.map(String.init) ?? token
+        return bare != token ? (index[bare] ?? []) : []
+    }
+
+    /// Build (or return cached) the reverse-dependents index from the raw catalog
+    /// JSON. Prefers the user-refreshed gzip pair, falls back to the bundled pair.
+    /// On any load failure the index is an empty map (honest empty state).
+    private func ensureReverseIndex() -> [String: [ReverseDependent]] {
+        if let reverseIndexCache { return reverseIndexCache }
+        var formulaArr: [[String: Any]] = []
+        var caskArr: [[String: Any]] = []
+        if let dir = Self.userCatalogDir,
+           let f = Self.loadGzippedJSONArray(at: dir.appendingPathComponent("formula.json.gz")),
+           let c = Self.loadGzippedJSONArray(at: dir.appendingPathComponent("cask.json.gz")) {
+            formulaArr = f
+            caskArr = c
+        } else {
+            formulaArr = Self.loadGzippedJSONArray("formula") ?? []
+            caskArr = Self.loadGzippedJSONArray("cask") ?? []
+        }
+        let index = buildReverseDependentsIndex(formulae: formulaArr, casks: caskArr)
+        reverseIndexCache = index
+        return index
     }
 
     // MARK: - Decode

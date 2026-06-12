@@ -44,7 +44,7 @@
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
   import ShieldAlert from "@lucide/svelte/icons/shield-alert";
   import Shield from "@lucide/svelte/icons/shield";
-  import { brewInfo, brewInstall, brewUninstall, brewUpgrade, appVersion } from "$lib/api";
+  import { brewInfo, brewInstall, brewUninstall, brewUpgrade, appVersion, catalogReverseDependents } from "$lib/api";
   import { isLinux } from "$lib/util/platform";
   import { safeOpenUrl } from "$lib/util/url";
   import { bareToken } from "$lib/util/token";
@@ -53,7 +53,7 @@
   import IssueModal from "./IssueModal.svelte";
   import TrendingSparkline from "./TrendingSparkline.svelte";
   import { trendingHistory } from "$lib/stores/trendingHistory.svelte";
-  import { brewErrorMessage, isBrewError, normalizeServiceStatus, type EnrichmentEntry, type IconSource, type PackageDetail, type RawVuln, type Severity } from "$lib/types";
+  import { brewErrorMessage, isBrewError, normalizeServiceStatus, type EnrichmentEntry, type IconSource, type PackageDetail, type RawVuln, type ReverseDependent, type Severity } from "$lib/types";
 
   // Categories file is small; ensure it's loaded so the pills can render. Idempotent.
   categories.ensureLoaded();
@@ -82,6 +82,10 @@
 
   let depsOpen = $state(false);
   let dependentsOpen = $state(false);
+  // Feature #1 — reverse dependencies ("Required by"). Catalog-graph
+  // inversion fetched alongside the detail; collapsible like Dependencies.
+  let reqByOpen = $state(false);
+  let dependents = $state<ReverseDependent[]>([]);
   let confirmUninstall = $state(false);
   let confirmExternalInstall = $state(false);
 
@@ -124,6 +128,9 @@
     loading = true;
     error = null;
     detail = null;
+    // Reset reverse-deps for the new package; refilled below.
+    dependents = [];
+    reqByOpen = false;
     try {
       detail = await brewInfo(name, kind);
     } catch (e) {
@@ -148,6 +155,25 @@
     // or Offline Mode is on, so this is safe to call unconditionally.
     // Soft-fails — sparkline simply doesn't appear if fetch fails.
     void trendingHistory.ensureSeriesLoaded(name, kind);
+    // Feature #1 — reverse dependencies. Pure catalog-graph inversion
+    // (no subprocess, no network). Key on the bare token: the catalog
+    // graph stores bare formula tokens, while `name` may be tap-qualified
+    // (`user/tap/foo`). Soft-fails to an empty set — the section simply
+    // doesn't appear if the lookup errors. Guarded against a stale
+    // response overwriting a newer selection via the token check.
+    {
+      const reqToken = bareToken(name);
+      void catalogReverseDependents(reqToken)
+        .then((res) => {
+          // Only apply if the user is still looking at this package.
+          if (ui.selectedPackage && bareToken(ui.selectedPackage.name) === reqToken) {
+            dependents = res.dependents;
+          }
+        })
+        .catch(() => {
+          /* leaf / unknown / catalog-corrupt → no section */
+        });
+    }
     // Opt-in live enrichment: fetch fresher friendly-name/summary/etc. for the
     // package being viewed and overlay it. No-ops unless the user opted in
     // (toggle + not paranoid + AI on); soft-fails to the bundled entry.
@@ -374,6 +400,35 @@
     const installed = packages.all.find((p) => p.name === token);
     const kind = installed?.kind ?? "formula";
     ui.selectPackage(token, kind);
+  }
+
+  /** Feature #1 — reverse dependents, filtered for the host platform.
+   *  Cask dependents can only install on macOS, so on Linux we drop
+   *  cask-kind rows entirely (a deep-linked formula must never offer a
+   *  cask that can only fail). Formula→formula edges show everywhere —
+   *  byte-identical to the macOS formula-graph result. */
+  let visibleDependents = $derived<ReverseDependent[]>(
+    isLinux ? dependents.filter((d) => d.kind !== "cask") : dependents,
+  );
+
+  /** Jump to a reverse-dependent's detail. The dependent's `kind` is
+   *  authoritative (it came straight from the catalog), so we pass it
+   *  directly rather than re-inferring like {@link openSimilar}. */
+  function openDependent(dep: ReverseDependent) {
+    ui.selectPackage(dep.name, dep.kind);
+  }
+
+  /** Short label for an edge type, shown after the name. "required" is
+   *  the default and stays unlabelled to keep the list quiet; the rest
+   *  are flagged so build-only / opt-in edges read honestly. */
+  function edgeLabel(dep: ReverseDependent): string | null {
+    if (dep.kind === "cask") return "cask";
+    switch (dep.edge) {
+      case "build":       return "build";
+      case "recommended": return "recommended";
+      case "optional":    return "optional";
+      case "required":    return null;
+    }
   }
 
   /**
@@ -1492,6 +1547,48 @@
           </section>
         {/if}
 
+        <!-- Feature #1 — Reverse dependencies ("Required by"). Pure
+             catalog-graph inversion: every catalog entry that declares
+             this package as a dependency. Each row is a button that
+             navigates to that dependent's detail (same pattern as the
+             Similar-packages pills). Cask dependents are gated off Linux
+             via `visibleDependents`. Empty set → no section (honest
+             leaf-node state). Note: forward Dependencies above come from
+             `brew info` (the installed formula's actual deps) while this
+             list inverts the bundled catalog snapshot, so the two aren't
+             guaranteed to be perfectly symmetric. -->
+        {#if visibleDependents.length > 0}
+          <section class="collapse">
+            <button class="collapse-head" aria-expanded={reqByOpen} onclick={() => (reqByOpen = !reqByOpen)}>
+              {#if reqByOpen}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
+              <span>Required by ({visibleDependents.length})</span>
+              <InfoButton
+                title="About reverse dependencies"
+                body="Packages in the bundled catalog that list this one as a dependency. Computed offline by inverting the catalog graph — no network or brew calls. Build-only and opt-in (recommended/optional) edges are labelled; everything else is a required runtime dependency."
+                label="About reverse dependencies"
+              />
+            </button>
+            {#if reqByOpen}
+              <ul class="deps">
+                {#each visibleDependents as dep (dep.kind + ":" + dep.name)}
+                  {@const label = edgeLabel(dep)}
+                  <li>
+                    <button
+                      type="button"
+                      class="dependent-link"
+                      onclick={() => openDependent(dep)}
+                      title={`Open ${dep.name}`}
+                    >
+                      {dep.name}
+                    </button>
+                    {#if label}<span class="dependent-edge text-muted">{label}</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        {/if}
+
         {#if detail.conflictsWith.length > 0}
           <section class="collapse">
             <button class="collapse-head" aria-expanded={dependentsOpen} onclick={() => (dependentsOpen = !dependentsOpen)}>
@@ -1820,6 +1917,29 @@
   }
   .deps li { min-width: 0; }
   .deps li::before { content: "·"; margin-right: var(--space-2); color: var(--color-text-muted); }
+
+  /* Feature #1 — reverse-dependent rows are clickable links that
+     navigate to the dependent's detail. Inline text-button styling so
+     they sit naturally inside the `.deps` list next to the bullet. */
+  .dependent-link {
+    color: var(--color-text-secondary);
+    font-size: inherit;
+    text-align: left;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    transition: color 0.12s ease;
+  }
+  .dependent-link:hover { color: var(--color-text-primary); text-decoration: underline; }
+  .dependent-link:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm, 3px);
+  }
+  .dependent-edge {
+    margin-left: var(--space-2);
+    font-size: var(--text-caption);
+  }
 
   .actions {
     display: flex;

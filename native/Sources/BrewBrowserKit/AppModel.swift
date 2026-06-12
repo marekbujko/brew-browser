@@ -738,6 +738,7 @@ public final class AppModel {
     var detailInfo: PackageInfo?
     var detailEnrichment: EnrichmentEntry?
     var detailCategories: [String] = []        // category labels for this package
+    var detailDependents: [ReverseDependent] = []  // catalog packages that depend on this one
     var detailLoading = false
     var detailError: String?
     /// True while any package action (install/upgrade/uninstall) is running —
@@ -1213,6 +1214,7 @@ public final class AppModel {
         detailInfo = nil
         detailEnrichment = nil
         detailCategories = []
+        detailDependents = []
         detailVulns = []
         detailVulnsScanned = false
         detailTrend = nil
@@ -1239,6 +1241,14 @@ public final class AppModel {
         // Bundled, synchronous-ish lookups first (instant).
         detailEnrichment = settings.aiFeaturesVisible ? enrichmentEntry(for: pkg.name) : nil
         detailCategories = categoryCatalog?.categoryLabels(for: pkg.name, kind: pkg.kind) ?? []
+
+        // Reverse dependents — packages in the bundled catalog that depend on
+        // this one (pure catalog-graph inversion, no subprocess). Casks are
+        // never depended-on, so a cask's reverse set is always empty.
+        detailDependents = []
+        let dependents = await catalogService.reverseDependents(of: pkg.name)
+        guard detailPackage?.id == pkg.id else { return }
+        detailDependents = dependents
 
         do {
             let info: PackageInfo

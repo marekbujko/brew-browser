@@ -155,6 +155,8 @@ pub struct Formula {
     pub disable_reason: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<String>,
+    #[serde(default, alias = "build_dependencies")]
+    pub build_dependencies: Vec<String>,
     #[serde(default, alias = "recommended_dependencies")]
     pub recommended_dependencies: Vec<String>,
     #[serde(default, alias = "optional_dependencies")]
@@ -200,6 +202,19 @@ pub struct Cask {
     pub disabled: bool,
     pub version: Option<String>,
     pub tap: String,
+    /// Formulae this cask requires, plucked from the nested upstream
+    /// `depends_on.formula` array (e.g. cask `aptible` →
+    /// `["libfido2"]`). Used to surface a formula's *cask* reverse-
+    /// dependents — the macOS-only superset of the reverse-deps graph.
+    /// Empty for the vast majority of casks. See
+    /// [`deserialize_depends_on_formula`].
+    #[serde(
+        default,
+        rename = "dependsOnFormula",
+        alias = "depends_on",
+        deserialize_with = "deserialize_depends_on_formula"
+    )]
+    pub depends_on_formula: Vec<String>,
 }
 
 // ---------- Custom deserializers ----------
@@ -269,6 +284,44 @@ where
         return Ok(Some(s.to_string()));
     }
     Ok(None)
+}
+
+/// Pluck `depends_on.formula` out of the upstream cask `depends_on`
+/// object and produce a flat `Vec<String>` of formula tokens.
+///
+/// Upstream shape is a nested object, e.g.
+/// `{"macos": {...}, "formula": ["libfido2"]}`. The `formula` value is
+/// an array of bare formula tokens in this dataset; a few historical
+/// records have surfaced it as a single bare string, so we accept both.
+/// Missing / null `depends_on`, or a `depends_on` with no `formula`
+/// key, yields an empty vec. Any unexpected shape (number, bool)
+/// silently degrades to empty rather than failing the whole cask parse.
+fn deserialize_depends_on_formula<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    let Some(v) = v else { return Ok(Vec::new()) };
+    let Some(obj) = v.as_object() else {
+        return Ok(Vec::new());
+    };
+    let Some(formula) = obj.get("formula") else {
+        return Ok(Vec::new());
+    };
+    match formula {
+        serde_json::Value::String(s) => {
+            if s.trim().is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![s.clone()])
+            }
+        }
+        serde_json::Value::Array(arr) => Ok(arr
+            .iter()
+            .filter_map(|e| e.as_str().map(|s| s.to_string()))
+            .collect()),
+        _ => Ok(Vec::new()),
+    }
 }
 
 // ---------- Catalog ----------
@@ -522,6 +575,7 @@ fn validate_and_truncate_formula(f: &mut Formula) {
     truncate_opt_in_place(&mut f.versions_stable, MAX_FIELD_LEN);
     truncate_in_place(&mut f.tap, MAX_FIELD_LEN);
     truncate_vec_in_place(&mut f.dependencies, MAX_NAME_LEN);
+    truncate_vec_in_place(&mut f.build_dependencies, MAX_NAME_LEN);
     truncate_vec_in_place(&mut f.recommended_dependencies, MAX_NAME_LEN);
     truncate_vec_in_place(&mut f.optional_dependencies, MAX_NAME_LEN);
     truncate_vec_in_place(&mut f.conflicts_with, MAX_NAME_LEN);
@@ -537,6 +591,7 @@ fn validate_and_truncate_cask(c: &mut Cask) {
     truncate_opt_in_place(&mut c.deprecation_reason, MAX_FIELD_LEN);
     truncate_opt_in_place(&mut c.version, MAX_FIELD_LEN);
     truncate_in_place(&mut c.tap, MAX_FIELD_LEN);
+    truncate_vec_in_place(&mut c.depends_on_formula, MAX_NAME_LEN);
 }
 
 fn truncate_in_place(s: &mut String, max: usize) {

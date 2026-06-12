@@ -164,6 +164,7 @@ pub fn run() {
             catalog_lookup_cask,
             catalog_formulae_summary,
             catalog_casks_summary,
+            catalog_reverse_dependents,
             categories_data,
             enrichment_data,
             enrichment_lookup,
