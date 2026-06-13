@@ -1,20 +1,19 @@
-# brew-browser — native Swift / Liquid Glass rebuild (experimental)
+# Brew Browser — native Swift / Liquid Glass build
 
-> **Status: experimental spike on branch `experiment/native-swift-liquid-glass`.**
-> This is a faithful **port** of the shipped Tauri app's interface and
-> functionality to a fully native macOS app — Swift 6 + SwiftUI + Liquid Glass
-> (macOS 26 "Tahoe"). It is **not** released and **not** committed; the entire
-> `native/` tree currently lives uncommitted on the experiment branch. The
-> production app remains the Tauri build on `main`.
+> **Status:** shipping native macOS build. `0.1.0` shipped alongside Tauri
+> `0.5.1`; `0.2.0` is staged for the next feature-request release.
+> This is the fully native Swift 6 + SwiftUI + Liquid Glass implementation for
+> macOS 26 "Tahoe". The Tauri app remains the cross-platform build for macOS
+> 13+ and Linux; both shells share the same product contract.
 
 ## Why this exists
 
 The launch surfaced recurring "Tauri isn't native" chatter. Rather than argue it,
-this branch rebuilds the same product natively to see how close stock Apple
-components get us. The Tauri app + the memory bank are the complete spec: the
-data sources and functionality stay **identical** (trending, AI-enhanced
-categories, GitHub integration, vulnerability scanning, auto-update) — only the
-shell changes from WebView/Svelte/Rust to SwiftUI.
+the project now ships the same product in a fully native macOS shell as well as
+the cross-platform Tauri shell. The Tauri app + the memory bank are the complete
+spec: the data sources and functionality stay **identical** (trending,
+AI-enhanced categories, GitHub integration, vulnerability scanning, auto-update)
+— only the shell changes from WebView/Svelte/Rust to SwiftUI.
 
 Guiding constraint (learned the hard way during the spike): **stock Apple
 scaffolding only, no overrides.** No custom window chrome, no
@@ -31,13 +30,11 @@ pixel-perfect custom look disagree, the stock default wins.
 | Build system | **Swift Package Manager** (`swift build`) — *not* an Xcode project |
 | Charts | Swift Charts (`SectorMark`, `LineMark`) |
 
-**Why SPM and not `xcodebuild`?** Full Xcode *is* installed at
-`/Applications/Xcode.app`, but `xcode-select` on this machine points at the
-Command Line Tools, so `xcodebuild` is unavailable from the CLI. `swift build`
-works fine under CLT and links every Liquid Glass API. You can still open
-`native/Package.swift` directly in Xcode for Previews / Run. Switching the active
-toolchain would need `sudo xcode-select -s` (intentionally not done — kept on CLI
-`swift build`).
+**Why SPM and not an `.xcodeproj`?** The app intentionally stays a Swift Package:
+`swift build` / `swift test` work from the CLI, while opening
+`native/Package.swift` directly in Xcode still gives Previews / Run. The release
+script wraps the SwiftPM executable into a normal `.app` and signs/notarizes that
+bundle.
 
 ## Build & run
 
@@ -61,7 +58,7 @@ Stock SwiftUI containers throughout: `NavigationSplitView` (sidebar + detail),
 `.inspector(isPresented:)` (package detail), `Settings {}` scene + `SettingsLink`
 (preferences), `TabView` (settings panes), `Form`/`.formStyle(.grouped)`.
 
-### Source map — `Sources/BrewBrowser/`
+### Source map — `Sources/BrewBrowserKit/`
 
 | File | Role |
 |------|------|
@@ -79,6 +76,10 @@ Stock SwiftUI containers throughout: `NavigationSplitView` (sidebar + detail),
 | `GitHubService.swift` | `actor` — OAuth device flow, Keychain via Security.framework, repo stats |
 | `TrendingHistoryService.swift` | `actor` — opt-in per-package sparklines from `brew-browser.zerologic.com` |
 | `Categories.swift` | Bundled `categories.json` loader for the Dashboard donut |
+| `SnapshotsView.swift` | Brewfile snapshot save/restore UI |
+| `ServicesView.swift` | `brew services` list/start/stop/restart UI |
+| `ActivityView.swift` | Persistent activity history and live brew job output |
+| `UpdaterController.swift` | Sparkle 2 bridge for update checks and install UI |
 | `Resources/` | `categories.json` (838 KB) + `enrichment.json` (2.8 MB, uncompressed) |
 
 Data layers mirror the Tauri app exactly:
@@ -95,11 +96,15 @@ Data layers mirror the Tauri app exactly:
 | Package detail inspector | ✅ all 14 sections render live (Security / Trend / GitHub stars verified) |
 | Settings | ✅ 9-tab stock `TabView`, all toggles wired to real systems |
 | Data layer | ✅ 6 services + `LocalPrefs` ported |
-| Library panel | 🚧 row→detail wired; needs kind pills, sort, filters |
-| Discover / Trending / Snapshots / Services / Activity | 🚧 placeholders |
-| Dashboard GitHub "starred N of M" card | 🚧 reachable now Settings sign-in exists; needs batch resolver |
-| In-app updates (Sparkle) | ⏸ deferred — the only genuinely-unported subsystem; Updates tab auto-check toggle persists, install is a stub |
-| Vulns "scan all" from Settings | ⏸ `VulnsService` currently has `scanOne` only |
+| Library panel | ✅ sortable/filterable table, Manual/Dependency filters, vulnerable filter, row→detail inspector |
+| Discover | ✅ bundled catalog browse/search, category tiles, subcategory layer staged for next release |
+| Trending | ✅ Homebrew analytics, velocity, optional sparklines |
+| Snapshots | ✅ Brewfile dump/restore |
+| Services | ✅ list/start/stop/restart via `brew services` |
+| Activity | ✅ persistent job history + live output |
+| Dashboard GitHub "starred N of M" card | ✅ signed-in status + summary card |
+| In-app updates (Sparkle) | ✅ Sparkle 2 feed, signed zip update payloads, signed/notarized first-install DMGs |
+| Vulns scanning | ✅ install-wide scan through `brew vulns`, dashboard exposure, package security card |
 
 ## Build loop
 
@@ -116,6 +121,6 @@ edit → cd native && ./build-app.sh debug → killall BrewBrowser; open BrewBro
 - **Never name an app type `Section` / `Form`** etc. — it shadows the SwiftUI symbol and cascades into dozens of bogus errors. (The app's sidebar enum is named `Section` and works, but qualify `SwiftUI.Section` at use sites.)
 - `AppSettings.save()` throws → `try? settings.save()` at every set closure. Actor methods (`github.status()` etc.) need `await` inside a `Task`.
 
-See `memory-bank/tasks/2026-05/22-native-swift-liquid-glass-rebuild.md` for the
-full task record and `memory-bank/decisions.md` (2026-05-30 ADR) for the rebuild
-rationale.
+See `memory-bank/tasks/2026-06/12-release-v0.5.1-native-0.1.0.md` for the first
+native release record and `memory-bank/decisions.md` (2026-06-01 parity charter)
+for the two-build rationale.

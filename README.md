@@ -33,7 +33,7 @@ Homebrew is the standard package manager on macOS. brew-browser gives it a real 
 
 - **Dashboard** — your Homebrew setup at a glance: installed count, updates available, brew version, formula/cask split, top-categories donut chart, storage usage (Cellar / Caskroom / var/log / cache) with one-click "Reveal in Finder" (macOS) / "Show in file manager" (Linux), and an opt-in **Exposure** card surfacing known vulnerabilities across your install
 - **Library** — every installed formula and cask in one dense, filterable list, with outdated badges, sortable columns, category chip filters, an opt-in **Vulnerable** filter pill, inline severity dots, and a slide-over detail panel
-- **Discover** — search the full Homebrew catalog (15,974 packages, bundled at build time + user-refreshable) by name or browse via the 19-category tile grid; multi-select chip filter
+- **Discover** — search the full Homebrew catalog (16k+ packages, bundled at build time + user-refreshable) by name, browse via the 19-category tile grid, and drill into subcategory groupings for large categories; multi-select chip filter
 - **Trending** — top packages from Homebrew's published `formulae.brew.sh` analytics, with 30 / 90 / 365-day windows, sortable columns, a **velocity index** (recent-month vs prior-11-month adoption signal), and opt-in per-package install-trend sparklines
 - **Snapshots** — save and restore Brewfiles using Homebrew's own `brew bundle` mechanism; "set up a new Mac" in one click
 - **Services** — list, start, stop, and restart background services managed by launchd through `brew services`
@@ -62,7 +62,7 @@ macOS-26-only.
 | Role | the shipping cross-platform app | the genuinely-native macOS flagship |
 | Source | `src/` (frontend) + `src-tauri/` (Rust) | `native/` (Swift Package) |
 | Updates | in-app updater (minisign) | Sparkle 2 (ed25519) |
-| Status | shipping, signed + notarized | in development on `main` |
+| Status | shipping, signed + notarized | shipping, signed + notarized |
 
 Both read the same `settings.json` schema, the same bundled `categories.json` /
 `enrichment.json`, the same `brew` / `brew vulns` invocations, and the same
@@ -150,7 +150,7 @@ swift test                  # unit tests
 
 ## Architecture
 
-**Tauri build:** a Tauri 2 shell hosts a SvelteKit + Svelte 5 frontend in the system WebView. macOS is the primary target; Linux is newly supported (same codebase, built on Ubuntu 22.04+ via CI). A Rust backend exposes ~55 typed Tauri commands that shell out to `brew` via `tokio::process` and stream stdout/stderr back over typed IPC channels. Paths are derived from `brew --prefix` / `brew --cache` rather than hardcoded, so the Linuxbrew prefix (`/home/linuxbrew/.linuxbrew`, or `~/.linuxbrew`) is picked up automatically alongside the macOS `/opt/homebrew`. The full Homebrew catalog is bundled at build time (~6 MiB gzipped) and refreshable on demand. Trending data comes straight from `formulae.brew.sh`'s public analytics JSON, cached in memory for an hour. Optional GitHub integration uses OAuth Device Flow with the token stored only in the system keyring (macOS Keychain; Secret Service / gnome-keyring / KWallet on Linux). No shell plugin, no arbitrary command execution — every `brew` invocation is built in Rust from a small set of enumerated inputs. See [docs/PLAN.md](./docs/PLAN.md) for the full design and [memory-bank/backendApi.md](./memory-bank/backendApi.md) for the complete IPC surface.
+**Tauri build:** a Tauri 2 shell hosts a SvelteKit + Svelte 5 frontend in the system WebView. macOS is the primary target; Linux is newly supported (same codebase, built on Ubuntu 22.04+ via CI). A Rust backend exposes 150+ typed Tauri commands that shell out to `brew` via `tokio::process` and stream stdout/stderr back over typed IPC channels. Paths are derived from `brew --prefix` / `brew --cache` rather than hardcoded, so the Linuxbrew prefix (`/home/linuxbrew/.linuxbrew`, or `~/.linuxbrew`) is picked up automatically alongside the macOS `/opt/homebrew`. The full Homebrew catalog is bundled at build time (~6 MiB gzipped) and refreshable on demand. Trending data comes straight from `formulae.brew.sh`'s public analytics JSON, cached in memory for an hour. Optional GitHub integration uses OAuth Device Flow with the token stored only in the system keyring (macOS Keychain; Secret Service / gnome-keyring / KWallet on Linux). No shell plugin, no arbitrary command execution — every `brew` invocation is built in Rust from a small set of enumerated inputs. See [docs/PLAN.md](./docs/PLAN.md) for the full design and [memory-bank/backendApi.md](./memory-bank/backendApi.md) for the complete IPC surface.
 
 **Native build:** a Swift 6 + SwiftUI app (`native/`, a Swift Package — no `.xcodeproj`). Stock Apple scaffolding only — `NavigationSplitView`, `.inspector`, `Settings`/`SettingsLink`, `Form`, Liquid Glass materials — no custom window chrome. Stateless services (`BrewService`, `GitHubService`, `VulnsService`) are `Sendable struct`s that mirror the Rust modules and shell out to `brew` via `Foundation.Process` with typed argument arrays (no shell). The same bundled JSON data contract; settings persist to the same `settings.json` schema; updates via Sparkle 2. See `native/README.md`.
 
@@ -209,7 +209,16 @@ Contributions welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the dev loop
 
 ## Status
 
-**v0.5.0** shipped (signed + notarized). All seven core panes live: Dashboard, Library, Discover (with bundled catalog + 15,725 AI-curated friendly names and summaries), Trending, Snapshots, Services, and Activity. Optional GitHub integration via OAuth Device Flow is intent-discovered — sign-in only prompts when you actually try to star / watch / file an issue, never as static UI clutter. Two opt-in surfaces beyond the always-on core: **Enhanced Trending History** (v0.4.0+) for per-package install-trend sparklines, and **Vulnerability Scanning** (v0.5.0+) shelling out to the official `brew vulns` subcommand for CVE surfacing against your installed formulae. Settings ships with Offline Mode and a corrupt-recovery default. Native macOS title bar with traffic-light alignment, collapsible sidebar with persistent type-ahead search, (i) info popovers in place of AI badges for every enriched field.
+**Next release:** Tauri `0.6.0` and native `0.2.0` are staged on the feature-request branch. This batch rolls up the Reddit-request backlog across both shells: reverse-dependency detail, deprecated/disabled indicators, Manual vs Dependency filters, per-package disk size, and Discover subcategory browsing.
+
+**Current stable release:** Tauri `0.5.1` + native `0.1.0` shipped signed + notarized together. All seven core panes live in both shells: Dashboard, Library, Discover, Trending, Snapshots, Services, and Activity. Optional GitHub integration via OAuth Device Flow is intent-discovered — sign-in only prompts when you actually try to star / watch / file an issue, never as static UI clutter. Two opt-in surfaces beyond the always-on core: **Enhanced Trending History** (v0.4.0+) for per-package install-trend sparklines, and **Vulnerability Scanning** (v0.5.0+) shelling out to the official `brew vulns` subcommand for CVE surfacing against your installed formulae. Settings ships with Offline Mode and a corrupt-recovery default. Native macOS title bar with traffic-light alignment, collapsible sidebar with persistent type-ahead search, and (i) info popovers in place of AI badges for every enriched field.
+
+**v0.5.1** — reliability + first native release. Highlights:
+- **Both builds shipped together.** Tauri `0.5.1` remains the cross-platform macOS 13+ / Linux build; native `0.1.0` is the macOS 26 SwiftUI build with Sparkle updates.
+- **Live progress during installs and upgrades.** Multi-package operations now show determinate progress parsed from brew's `==>` markers.
+- **Upgrade-all warning classification.** Non-fatal `brew upgrade` post-install/link warnings no longer present as failed upgrades.
+- **GitHub sign-in reliability.** Credential state moved to one combined Keychain item so status persists cleanly across launches.
+- **Dashboard launch hydration + window fixes.** GitHub/vulnerability cards populate from cache on first paint, and the window remembers size and position.
 
 **v0.5.0** — opt-in vulnerability scanning. Highlights:
 - **`brew vulns` integration.** New Settings → Network → Vulnerability Scanning subsection (opt-in, off by default) shells out to the official `Homebrew/homebrew-brew-vulns` subcommand by Andrew Nesbitt to query OSV.dev for known CVEs against installed formulae. One-click installer for the `brew vulns` subcommand itself when you opt in — no terminal required.

@@ -30,6 +30,7 @@ Native macOS build under `native/`.
 | 11 | [Launch batch: upgrade-all fix + #58 + #57, native test target, security pass](./11-launch-batch-progress-category-upgrade.md) | 2026-06-07 | `feat/launch-batch-progress-category-upgrade` |
 | 12 | [Release: Tauri 0.5.1 + native 0.1.0 (first native release) — SHIPPED](./12-release-v0.5.1-native-0.1.0.md) | 2026-06-07 | `v0.5.1` tag / `main` |
 | 13 | [Intel (x86_64) builds + missing-Homebrew onboarding + Linux integration](./13-intel-builds-onboarding-linux.md) | 2026-06-10/11 | `feat/intel-builds-and-onboarding` |
+| 14 | [Discover sub-categories (feature #6) + Reddit feature-request batch #1–#6](./14-discover-subcategories.md) | 2026-06-13 | `feat/feature-requests` |
 
 ## Tauri track (`main`)
 

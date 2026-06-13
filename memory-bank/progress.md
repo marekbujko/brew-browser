@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-06-13 — feature-request batch (both builds), staged for Tauri 0.6.0 / native 0.2.0
+
+- ✅ Six community feature requests built across **both** builds, one per commit on `feat/feature-requests`: reverse dependencies ("Required by") in detail, deprecated/disabled package indicators, a Manual vs Dependency filter in the Library, per-package on-disk size, a Recent-changes Dashboard card, and **Discover sub-categories** (#6).
+- ✅ **Discover sub-categories** — within a single selected category, members sub-group by the other categories they also belong to, with a "General <Category>" bucket for members carrying only that category. A pure derivation over the existing flat category data (no taxonomy tree, no extra data, no subprocess); an info popover states it is a grouping aid, not an official hierarchy. Single-category browse only — multi-select and search stay flat; the cross-platform build excludes casks on Linux. See `decisions.md` 2026-06-13 + `tasks/2026-06/14-*`.
+- ✅ **Cross-build parity verified** — identical derivation on both builds, locked to a shared fixture. Found and fixed a real divergence where the catch-all `uncategorized` slug was being treated as a sub-group on one build but not the other. Tests: 35 (cross-platform) + 124 (native) green; type-check clean.
+- 🔢 Versioning: independent tracks — cross-platform `0.6.0`, native `0.2.0` (each by its own release history). See `decisions.md` 2026-06-13.
+- ⏳ #6 is complete but uncommitted; the batch is staged on `feat/feature-requests`, not yet released.
+
 ## 2026-06-07 — 🚀 SHIPPED: Tauri 0.5.1 + native 0.1.0 (first native release)
 
 - ✅ Both builds **signed, notarized, released** together (tag `v0.5.1`). 5 assets on the GitHub release: Tauri `.dmg` + `.app.tar.gz`(+sig), native `.dmg` + `.zip`.

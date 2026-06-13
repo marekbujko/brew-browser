@@ -554,3 +554,37 @@ defined roles). See [[project-native-swift-rebuild]] cross-session memory.
   detection because we watch prefixes directly, not the shell environment.
 
 **References**: `tasks/2026-06/13-intel-builds-onboarding-linux.md`
+
+---
+
+## 2026-06-13: Discover sub-categories = co-occurrence over the flat category data (no taxonomy tree)
+
+**Context:** A requested feature was a second level of browsing inside Discover — drill into a category and see it broken down further. The category data (`categories.json`) is strictly flat: every package maps to one or more category slugs, there is no nested/parent-child field, and the offline categorizer emits a single level. Inventing a hierarchy (hand-authored sub-trees, or an LLM pass to nest categories) would be unverifiable, would drift from the catalog, and would imply a taxonomy the data does not support.
+
+**Decision:** Derive sub-groups purely from **multi-label membership**, the only genuine second-level signal already present. Within a selected category X, each member is grouped by the OTHER categories it also belongs to; a member carrying only X lands in a pinned-last "General X" bucket. Labels read "X + Y" and "General X" so the grouping never reads as a strict hierarchy. Sub-grouping appears only for a single selected category with no active search; multi-select and search views stay flat.
+
+**Rationale:**
+- 100% data-derived — no commands, no subprocess, no network, no separate data file to maintain or ship.
+- Honest about its own limits: co-occurrence does not cleanly partition a category (many members are solo), so the "General X" bucket is first-class and often the largest, and an info popover states plainly that this is a grouping aid, not an official taxonomy.
+- Both shells implement the identical derivation and are locked to a shared parity fixture (identical ordered keys, labels, and membership for the same input), so the macOS-native and cross-platform builds can never silently disagree.
+
+**Trade-off accepted:** A cross-tagged package appears in more than one sub-group (by design — it genuinely belongs to each), so bucket counts sum to more than the flat member count. This is surfaced rather than hidden. `uncategorized` is never a co-occurring bucket (it is the catch-all, sunk exactly as the category tiles sink it), so a package tagged `[X, uncategorized]` is treated as solo-in-X.
+
+**References**: `tasks/2026-06/14-discover-subcategories.md`, `src/lib/util/subcategories.ts`, `native/Sources/BrewBrowserKit/Categories.swift`
+
+---
+
+## 2026-06-13: Independent version tracks for the two builds (native and cross-platform)
+
+**Context:** The project ships two builds in feature/data-contract parity (per the parity charter): the cross-platform build and the macOS-native build. They are separate artifacts with separate update channels and separate release histories. When a release bumps both, the version numbers have to come from somewhere. The cross-platform build has shipped through several minor releases; the native build has shipped only once.
+
+**Decision:** Version each build by its **own** release history rather than forcing a single shared number. The release carrying the feature-request batch + Linux support is the cross-platform build's next minor (a genuine new-feature/new-platform increment) and the native build's *second* release (its own next minor from a single prior release). Release notes state the equivalence so readers know the two numbers denote the same feature set.
+
+**Rationale:**
+- Each version number stays truthful to that build's actual history. Snapping the younger native build up to match the older build's number would imply a sequence of releases that never happened.
+- The builds update through independent channels, so a consumer of one never has to reason about the other's numbering.
+- A minor (not patch) bump on both is warranted: a new platform plus several user-facing features is well beyond a bug-fix increment.
+
+**Trade-off accepted:** The same feature set ships under two different numbers, which can momentarily confuse "which version has feature Z." Mitigated by stating the equivalence explicitly in the release notes and changelog.
+
+**References**: `tasks/2026-06/14-discover-subcategories.md`
