@@ -241,6 +241,17 @@ pub fn upgrade_warnings_only(stderr_excerpt: &str, command: &str) -> bool {
     NONFATAL.iter().any(|w| stderr_excerpt.contains(w))
 }
 
+/// True when `command` is a `brew doctor` invocation. `brew doctor` exits 1
+/// whenever it finds advisories ("Warning: ..."), but those are diagnostics to
+/// read — not a job failure. The streaming layer treats a non-zero doctor exit
+/// as effective-success so it surfaces the advisory output in the Activity log
+/// instead of throwing a "doctor failed, file an issue" error. A clean run
+/// (exit 0, "Your system is ready to brew.") is unaffected.
+pub fn doctor_advisory_exit(command: &str) -> bool {
+    let mut parts = command.split_whitespace();
+    parts.next() == Some("brew") && parts.next() == Some("doctor")
+}
+
 // ---------- Tests ----------
 
 #[cfg(test)]
@@ -507,6 +518,22 @@ Error: docker-desktop: Failure while executing; `/usr/bin/sudo -E -- /usr/bin/xa
             "✔︎ Bottle foo (1.0)\n",
             "brew upgrade"
         ));
+    }
+
+    // ---- issue #80: doctor advisory exit ----
+
+    #[test]
+    fn doctor_advisory_exit_matches_brew_doctor() {
+        assert!(doctor_advisory_exit("brew doctor"));
+    }
+
+    #[test]
+    fn doctor_advisory_exit_rejects_other_commands() {
+        assert!(!doctor_advisory_exit("brew upgrade"));
+        assert!(!doctor_advisory_exit("brew cleanup --prune=all --scrub"));
+        assert!(!doctor_advisory_exit("brew install doctor")); // installing a formula named "doctor"
+        assert!(!doctor_advisory_exit(""));
+        assert!(!doctor_advisory_exit("doctor"));
     }
 
     // ---- robustness / fuzz (no panic on adversarial input) ----

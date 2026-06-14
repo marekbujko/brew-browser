@@ -522,6 +522,13 @@ export interface DiskUsageReport {
   cacheAgeSeconds: number;
 }
 
+/** Issue #80 — estimate of how much `brew cleanup --prune=all` would reclaim.
+ *  `reclaimableBytes` is null when brew reported no figure (nothing to clean,
+ *  or output we couldn't parse) — the UI hides the hint rather than show 0. */
+export interface CleanupPreview {
+  reclaimableBytes: number | null;
+}
+
 // =========================================================
 // 2.9 Trending (Phase 6)
 // =========================================================

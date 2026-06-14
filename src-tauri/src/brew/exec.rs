@@ -21,7 +21,7 @@ use tokio::process::Command;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
-use crate::brew::error_patterns::{friendlify, upgrade_warnings_only};
+use crate::brew::error_patterns::{doctor_advisory_exit, friendlify, upgrade_warnings_only};
 use crate::error::{truncate_tail, BrewError};
 use crate::state::JobHandle;
 use crate::types::{BrewStreamEvent, JobResult};
@@ -269,7 +269,9 @@ pub async fn run_brew_streaming(
             // work completed. Treat those as success — they were the dominant
             // source of bogus "Upgrade-all failed" reports. See error_patterns.
             let warnings_only = !success && upgrade_warnings_only(&excerpt, &display_command);
-            let effective_success = success || warnings_only;
+            // `brew doctor` exits 1 on advisories — diagnostics, not a failure.
+            let advisory_only = !success && doctor_advisory_exit(&display_command);
+            let effective_success = success || warnings_only || advisory_only;
             let friendly_message = if effective_success {
                 None
             } else {

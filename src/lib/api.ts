@@ -30,6 +30,7 @@ import type {
   CategoriesData,
   CreatedIssue,
   DeviceFlowPoll,
+  CleanupPreview,
   DeviceFlowStart,
   DiskUsageReport,
   EnrichmentData,
@@ -217,6 +218,29 @@ export function brewUpdate(
   onEvent: (evt: BrewStreamEvent) => void,
 ): Promise<JobResult> {
   return invoke<JobResult>("brew_update", {
+    onEvent: makeChannel(onEvent),
+  });
+}
+
+/** Issue #80 — stream `brew doctor` diagnostics into the Activity drawer.
+ *  (Distinct from the onboarding `brewDoctor()` env probe above.) A non-zero
+ *  exit from advisories is reported by the backend as effective-success. */
+export function brewDoctorStream(
+  onEvent: (evt: BrewStreamEvent) => void,
+): Promise<JobResult> {
+  return invoke<JobResult>("brew_doctor_stream", {
+    onEvent: makeChannel(onEvent),
+  });
+}
+
+/** Issue #80 — stream `brew cleanup --prune=all --scrub [--verbose]`. The
+ *  caller MUST confirm first (destructive of cached downloads). */
+export function brewCleanup(
+  verbose: boolean,
+  onEvent: (evt: BrewStreamEvent) => void,
+): Promise<JobResult> {
+  return invoke<JobResult>("brew_cleanup", {
+    verbose,
     onEvent: makeChannel(onEvent),
   });
 }
@@ -490,6 +514,12 @@ export function diskUsage(): Promise<DiskUsageReport> {
 /** Force the next `diskUsage()` call to re-run `du` instead of using cache. */
 export function diskUsageClearCache(): Promise<void> {
   return invoke<void>("disk_usage_clear_cache");
+}
+
+/** Issue #80 — dry-run estimate of what `brew cleanup --prune=all` would free.
+ *  Best-effort; `reclaimableBytes` is null when brew reported no figure. */
+export function brewCleanupPreview(): Promise<CleanupPreview> {
+  return invoke<CleanupPreview>("brew_cleanup_preview");
 }
 
 /**

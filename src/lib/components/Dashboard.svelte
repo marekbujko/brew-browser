@@ -13,6 +13,8 @@
   import LoadingState from "./LoadingState.svelte";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+  import Stethoscope from "@lucide/svelte/icons/stethoscope";
+  import Trash2 from "@lucide/svelte/icons/trash-2";
   import Star from "@lucide/svelte/icons/star";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Loader from "@lucide/svelte/icons/loader-2";
@@ -28,11 +30,11 @@
   import { github } from "$lib/stores/github.svelte";
   import { settings } from "$lib/stores/settings.svelte";
   import { vulnerabilities } from "$lib/stores/vulnerabilities.svelte";
-  import { brewUpdate, brewUpgrade, diskUsage, diskUsageClearCache, openInFinder } from "$lib/api";
+  import { brewUpdate, brewUpgrade, diskUsage, diskUsageClearCache, openInFinder, brewDoctorStream, brewCleanup, brewCleanupPreview } from "$lib/api";
   import UpgradeModal from "./UpgradeModal.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { resolveCategoryIcon } from "$lib/util/categoryIcon";
-  import { brewErrorMessage, isBrewError, type DiskUsageReport } from "$lib/types";
+  import { brewErrorMessage, isBrewError, type DiskUsageReport, type CleanupPreview } from "$lib/types";
   import { reportableToastError } from "$lib/util/reportIssue";
   import { isLinux, isMac } from "$lib/util/platform";
   import { fmtBytes } from "$lib/util/format";
@@ -40,6 +42,15 @@
   let disk = $state<DiskUsageReport | null>(null);
   let diskLoading = $state(false);
   let diskError = $state<string | null>(null);
+
+  // Issue #80 — cache maintenance (brew doctor / cleanup), surfaced on the
+  // Storage card since that's the disk surface and already shows the cache size.
+  let cleanupPreview = $state<CleanupPreview | null>(null);
+  let doctorRunning = $state(false);
+  let cleanupRunning = $state(false);
+  let cleanupConfirmOpen = $state(false);
+  let cleanupVerbose = $state(true); // reporter likes seeing every file removed
+  let maintBusy = $derived(doctorRunning || cleanupRunning);
 
   async function loadDisk(force = false) {
     if (diskLoading) return;
@@ -50,10 +61,69 @@
         try { await diskUsageClearCache(); } catch { /* best-effort */ }
       }
       disk = await diskUsage();
+      // Best-effort reclaimable estimate for the cleanup hint; never blocks the
+      // disk report, and a failure just hides the hint.
+      brewCleanupPreview().then((p) => { cleanupPreview = p; }).catch(() => { cleanupPreview = null; });
     } catch (e) {
       diskError = `Disk probe failed: ${isBrewError(e) ? brewErrorMessage(e) : String(e)}`;
     } finally {
       diskLoading = false;
+    }
+  }
+
+  /** Stream a no-package brew job into the Activity drawer, mirroring the
+   *  brew update / upgrade-all wiring (rebinds the temp job id to the real
+   *  one on the `started` event). */
+  async function streamJob(
+    label: string,
+    command: string,
+    run: (onEvent: (evt: import("$lib/types").BrewStreamEvent) => void) => Promise<{ success: boolean }>,
+  ): Promise<boolean> {
+    const tmpId = crypto.randomUUID();
+    activity.startJob(label, tmpId, command);
+    ui.openDrawer();
+    const result = await run((evt) => {
+      if (evt.kind === "started" && evt.jobId !== tmpId) {
+        const j = activity.jobs.find((j) => j.jobId === tmpId);
+        if (j) j.jobId = evt.jobId;
+      }
+      activity.handleEvent(evt);
+    });
+    return result.success;
+  }
+
+  async function runDoctor() {
+    if (maintBusy) return;
+    doctorRunning = true;
+    try {
+      // A non-zero doctor (advisories) is reported as success by the backend;
+      // the advisory text is in the Activity log, which is the whole point.
+      await streamJob("Running brew doctor", "brew doctor", brewDoctorStream);
+    } catch (e) {
+      reportableToastError("brew doctor failed to run", e);
+    } finally {
+      doctorRunning = false;
+    }
+  }
+
+  async function runCleanup() {
+    if (maintBusy) return;
+    cleanupConfirmOpen = false;
+    cleanupRunning = true;
+    try {
+      const ok = await streamJob(
+        "Cleaning up Homebrew cache",
+        "brew cleanup --prune=all --scrub",
+        (onEvent) => brewCleanup(cleanupVerbose, onEvent),
+      );
+      if (ok) {
+        // Cache shrank — re-measure the Storage card + refresh the estimate.
+        await loadDisk(true);
+      }
+    } catch (e) {
+      reportableToastError("Cleanup failed", e);
+    } finally {
+      cleanupRunning = false;
     }
   }
 
@@ -909,6 +979,59 @@
             {/each}
           </ul>
         {/if}
+
+        <!-- Issue #80 — cache maintenance. brew doctor (read-only diagnostics)
+             and brew cleanup (reclaim cached downloads), both streamed into the
+             Activity drawer. Lives on the Storage card since it already shows
+             the Download cache size. -->
+        <div class="storage-maint">
+          <div class="maint-actions">
+            <Button
+              size="sm"
+              variant="ghost"
+              onclick={runDoctor}
+              disabled={maintBusy}
+              title="Run brew doctor and stream the diagnostics into Activity"
+            >
+              {#snippet icon()}<Stethoscope size={14} />{/snippet}
+              {doctorRunning ? "Running…" : "Run brew doctor"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onclick={() => (cleanupConfirmOpen = !cleanupConfirmOpen)}
+              disabled={maintBusy}
+              title="Reclaim cached downloads (brew cleanup --prune=all --scrub)"
+            >
+              {#snippet icon()}<Trash2 size={14} />{/snippet}
+              {cleanupRunning ? "Cleaning…" : "Clean up cache…"}
+            </Button>
+            {#if cleanupPreview?.reclaimableBytes}
+              <span class="maint-hint text-muted">frees ~{fmtBytes(cleanupPreview.reclaimableBytes)}</span>
+            {/if}
+          </div>
+
+          {#if cleanupConfirmOpen}
+            <div class="maint-confirm" role="group" aria-label="Confirm cache cleanup">
+              <p>
+                Removes cached downloads{#if cleanupPreview?.reclaimableBytes}, freeing about
+                <strong>{fmtBytes(cleanupPreview.reclaimableBytes)}</strong>{/if} — including the
+                current versions (<code>--scrub</code>). Your installed packages are not affected.
+              </p>
+              <label class="maint-verbose">
+                <input type="checkbox" bind:checked={cleanupVerbose} />
+                Verbose — list every file removed
+              </label>
+              <div class="maint-confirm-actions">
+                <Button size="sm" variant="ghost" onclick={() => (cleanupConfirmOpen = false)}>Cancel</Button>
+                <Button size="sm" variant="danger" onclick={runCleanup}>
+                  {#snippet icon()}<Trash2 size={14} />{/snippet}
+                  Clean up
+                </Button>
+              </div>
+            </div>
+          {/if}
+        </div>
       </section>
 
       <!-- v0.5.0 — Exposure card. Opt-in only; hidden entirely when
@@ -1431,6 +1554,56 @@
     padding: var(--space-3) var(--space-4);
     color: var(--color-text-secondary);
     font-size: var(--text-body-sm);
+  }
+
+  /* ─── Cache maintenance (Issue #80) ───────────────────── */
+  .storage-maint {
+    border-top: 1px solid var(--color-border);
+    padding: var(--space-3) var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .maint-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+  .maint-hint {
+    font-size: var(--text-body-sm);
+    font-variant-numeric: tabular-nums;
+  }
+  .maint-confirm {
+    padding: var(--space-3);
+    border: 1px solid color-mix(in oklch, var(--color-danger) 38%, var(--color-border));
+    border-radius: var(--radius-lg);
+    background: color-mix(in oklch, var(--color-danger-subtle) 50%, var(--color-surface-raised));
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .maint-confirm p {
+    margin: 0;
+    font-size: var(--text-body-sm);
+    color: var(--color-text-secondary);
+    line-height: var(--lh-body);
+  }
+  .maint-confirm code {
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+  }
+  .maint-verbose {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-body-sm);
+    color: var(--color-text-primary);
+  }
+  .maint-confirm-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
   }
 
   /* ─── GitHub personal-stats card (Phase 12f) ──────────── */

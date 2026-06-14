@@ -183,6 +183,71 @@ pub async fn brew_update(
     result
 }
 
+/// `brew doctor` — streamed diagnostics (issue #80). Read-only: surfaces
+/// advisories in the Activity drawer, touches nothing. brew doctor exits 1
+/// when it finds advisories; `run_brew_streaming` (via `doctor_advisory_exit`)
+/// treats that non-zero exit as effective-success, so a doctor run that found
+/// warnings completes cleanly with the advisory text in the log rather than
+/// throwing a "doctor failed" error. Takes the write lock only to serialize
+/// streamed brew jobs (no two brew processes stomping each other's output).
+#[tauri::command]
+pub async fn brew_doctor_stream(
+    on_event: Channel<BrewStreamEvent>,
+    state: State<'_, AppState>,
+) -> Result<JobResult, BrewError> {
+    let path = state.require_brew_path().await?;
+
+    let args = vec!["doctor".to_string()];
+    let display = "brew doctor".to_string();
+    let jobs = state.jobs.clone();
+    let lock = state.brew_write_lock.clone();
+
+    let _guard = lock.lock_owned().await;
+    // No cache invalidation — doctor is read-only.
+    run_brew_streaming(&path, args, display, on_event, jobs).await
+}
+
+/// `brew cleanup --prune=all --scrub [--verbose]` — reclaim cache space (issue
+/// #80). Destructive of CACHED DOWNLOADS only (incl. current versions, via
+/// `--scrub`); installed packages are untouched. The UI confirm-gates this with
+/// the reclaimable estimate (see `brew_cleanup_preview`). `verbose` mirrors the
+/// reporter's preference to see every file removed. On success the disk-usage
+/// cache is dropped so the Storage card re-measures the now-smaller cache.
+#[tauri::command]
+pub async fn brew_cleanup(
+    verbose: bool,
+    on_event: Channel<BrewStreamEvent>,
+    state: State<'_, AppState>,
+) -> Result<JobResult, BrewError> {
+    let path = state.require_brew_path().await?;
+
+    let mut args = vec![
+        "cleanup".to_string(),
+        "--prune=all".to_string(),
+        "--scrub".to_string(),
+    ];
+    if verbose {
+        args.push("--verbose".to_string());
+    }
+    let display = format!(
+        "brew cleanup --prune=all --scrub{}",
+        if verbose { " --verbose" } else { "" }
+    );
+    let jobs = state.jobs.clone();
+    let lock = state.brew_write_lock.clone();
+
+    let _guard = lock.lock_owned().await;
+    let result = run_brew_streaming(&path, args, display, on_event, jobs).await;
+
+    if result.is_ok() {
+        // The on-disk cache shrank; drop the cached disk-usage report so the
+        // Storage card re-measures. Installed packages are unchanged, so the
+        // installed_cache is left intact.
+        *state.disk_usage_cache.lock().await = None;
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn cancel_job(job_id: Uuid, state: State<'_, AppState>) -> Result<(), BrewError> {
     let mut map = state.jobs.lock().await;

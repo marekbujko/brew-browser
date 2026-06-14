@@ -328,6 +328,71 @@ async fn reveal_in_file_manager(path: &str) -> Result<(), BrewError> {
     Ok(())
 }
 
+/// Preview of how much cache `brew cleanup --prune=all` would reclaim. Issue
+/// #80 — drives the "frees ~X" hint next to the Storage card's cleanup button.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupPreview {
+    /// Bytes `brew cleanup` estimates it would free, or `None` when brew didn't
+    /// report a figure (nothing to clean, or output shape we couldn't parse —
+    /// the UI hides the hint rather than showing a wrong/zero number).
+    pub reclaimable_bytes: Option<u64>,
+}
+
+/// Dry-run `brew cleanup -n --prune=all` and parse its "would free
+/// approximately X" estimate. Best-effort: any failure (brew error, unparsable
+/// output) yields `reclaimable_bytes: None` rather than erroring — this only
+/// feeds an advisory hint, never gates the cleanup action itself.
+#[tauri::command]
+pub async fn brew_cleanup_preview(state: State<'_, AppState>) -> Result<CleanupPreview, BrewError> {
+    let brew = state.require_brew_path().await?;
+    let reclaimable_bytes = match brew_subcommand(
+        &brew,
+        &["cleanup", "-n", "--prune=all"],
+        "brew cleanup -n --prune=all",
+    )
+    .await
+    {
+        Ok(out) => parse_reclaimable(&out),
+        Err(_) => None,
+    };
+    Ok(CleanupPreview { reclaimable_bytes })
+}
+
+/// Pull the byte estimate out of `brew cleanup -n` output. brew prints a line
+/// like `==> This operation would free approximately 1.2GB of disk space.`
+fn parse_reclaimable(output: &str) -> Option<u64> {
+    let marker = "would free approximately";
+    let after = output
+        .lines()
+        .find_map(|l| l.split_once(marker).map(|(_, rest)| rest))?;
+    let token = after.split_whitespace().next()?;
+    parse_size_token(token)
+}
+
+/// Parse a Homebrew size token like `1.2GB`, `500MB`, `1.5KB`, `900B` into
+/// bytes. brew's `disk_usage_readable` is 1024-based but labels units KB/MB/GB,
+/// so we treat them as binary multiples. Returns `None` on any shape we don't
+/// recognize (defensive against brew formatting drift).
+fn parse_size_token(token: &str) -> Option<u64> {
+    let token = token.trim().trim_end_matches(['.', ',']);
+    let split = token.find(|c: char| c.is_ascii_alphabetic())?;
+    let (num, unit) = token.split_at(split);
+    let value: f64 = num.parse().ok()?;
+    if value < 0.0 {
+        return None;
+    }
+    let mult: f64 = match unit.to_ascii_uppercase().as_str() {
+        "B" => 1.0,
+        "KB" | "K" | "KIB" => 1024.0,
+        "MB" | "M" | "MIB" => 1024.0 * 1024.0,
+        "GB" | "G" | "GIB" => 1024.0 * 1024.0 * 1024.0,
+        "TB" | "T" | "TIB" => 1024.0_f64.powi(4),
+        _ => return None,
+    };
+    Some((value * mult) as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,5 +472,44 @@ mod tests {
         )
         .await;
         assert!(size.is_none(), "absent keg dir must report no size");
+    }
+
+    // ---------- Issue #80: cleanup reclaimable-size parsing (pure) ----------
+
+    #[test]
+    fn parse_size_token_units() {
+        assert_eq!(parse_size_token("900B"), Some(900));
+        assert_eq!(parse_size_token("1KB"), Some(1024));
+        assert_eq!(parse_size_token("1.5KB"), Some(1536));
+        assert_eq!(parse_size_token("500MB"), Some(500 * 1024 * 1024));
+        assert_eq!(parse_size_token("1.2GB"), Some((1.2 * 1024.0 * 1024.0 * 1024.0) as u64));
+        // trailing punctuation from a sentence is tolerated
+        assert_eq!(parse_size_token("2GB."), Some(2 * 1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn parse_size_token_rejects_garbage() {
+        assert_eq!(parse_size_token(""), None);
+        assert_eq!(parse_size_token("GB"), None); // no number
+        assert_eq!(parse_size_token("12"), None); // no unit
+        assert_eq!(parse_size_token("1.2ZB"), None); // unknown unit
+        assert_eq!(parse_size_token("-5GB"), None); // negative
+    }
+
+    #[test]
+    fn parse_reclaimable_from_real_brew_line() {
+        let out = "Would remove: ~/Library/Caches/Homebrew/foo (1.2GB)\n\
+                   ==> This operation would free approximately 2.5GB of disk space.\n";
+        assert_eq!(
+            parse_reclaimable(out),
+            Some((2.5 * 1024.0 * 1024.0 * 1024.0) as u64)
+        );
+    }
+
+    #[test]
+    fn parse_reclaimable_none_when_nothing_to_clean() {
+        // brew prints no "would free" line when the cache is already empty.
+        assert_eq!(parse_reclaimable("Nothing to clean up.\n"), None);
+        assert_eq!(parse_reclaimable(""), None);
     }
 }
