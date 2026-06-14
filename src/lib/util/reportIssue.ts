@@ -171,10 +171,20 @@ export function reportContextFromActivityJob(
  */
 export function reportableToastError(title: string, e: unknown): void {
   if (isBrewError(e)) {
-    const ctx = reportContextFromBrewError(e, title);
-    if (e.code === "brew_exit_non_zero" && e.friendlyMessage) {
+    // A brew command that exited non-zero is a Homebrew/formula problem, NOT a
+    // brew-browser bug — never offer "Report to brew-browser" for it (that was
+    // the dominant source of misfiled "[brew-browser] Upgrade-all failed"
+    // issues). Classified failures are already shown in the Activity drawer's
+    // failure card, so skip the toast entirely; unclassified ones get a plain
+    // error toast with NO report action.
+    if (e.code === "brew_exit_non_zero") {
+      if (e.friendlyMessage) return;
+      toast.error(title, brewErrorMessage(e));
       return;
     }
+    // Other BrewError codes (Io, Internal, parse failures, …) are app-side
+    // problems worth reporting.
+    const ctx = reportContextFromBrewError(e, title);
     toast.error(title, brewErrorMessage(e), {
       label: "Report to brew-browser",
       onClick: () => {

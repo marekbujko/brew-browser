@@ -2111,6 +2111,16 @@ public final class AppModel {
         return "\(label) failed"
     }
 
+    /// True when a failed job is a genuine brew-browser problem (worth a
+    /// "Report to brew-browser") rather than a brew-command failure. A non-zero
+    /// brew exit means the command RAN and failed = a Homebrew/formula problem,
+    /// not our bug — so it is NOT reportable. Only a failure without a real brew
+    /// exit code (the app couldn't run the command) is. Mirrors the Tauri
+    /// drawer's `exitCode == null` check.
+    static func isAppError(_ job: ActivityJob) -> Bool {
+        (job.exitCode ?? 0) == 0
+    }
+
     private func focusFailedJobInDrawer(_ jobId: UUID) {
         activeJobId = jobId
         drawerOpen = true

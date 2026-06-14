@@ -160,12 +160,27 @@ struct ActivityDrawer: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(AppModel.failureNoticeTitle(for: job.label))
                         .font(.callout.weight(.semibold))
-                    Text(job.friendlyFailureMessage ?? "See the Activity output below for details.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if job.friendlyFailureMessage == nil {
+                    if let friendly = job.friendlyFailureMessage {
+                        // Known brew failure with a curated friendly message.
+                        Text(friendly)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if !AppModel.isAppError(job) {
+                        // brew ran and exited non-zero: a Homebrew/formula problem,
+                        // NOT a brew-browser bug. No report — point at Terminal.
+                        Text("This looks like a Homebrew error, not a brew-browser bug — the command ran but exited with status \(job.exitCode ?? 0). Try the same command in Terminal; if it fails there too, it's a Homebrew or formula issue to report upstream.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        // No brew exit code = the app couldn't run the command. Our bug.
+                        Text("brew-browser hit an unexpected error running this command.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         Button("Report to brew-browser") {
                             ReportIssue.open(for: job, brewVersion: model.brewVersion)
                         }
@@ -221,7 +236,7 @@ struct ActivityDrawer: View {
                     .font(.caption)
                     .foregroundStyle(Self.footerColor(job.status))
                     .lineLimit(3)
-                if job.status == .failed && job.friendlyFailureMessage == nil {
+                if job.status == .failed && AppModel.isAppError(job) {
                     Button("Report to brew-browser") {
                         ReportIssue.open(for: job, brewVersion: model.brewVersion)
                     }
