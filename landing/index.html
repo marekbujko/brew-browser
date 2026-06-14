@@ -213,8 +213,9 @@
       </ul>
       <p>Or install with Homebrew:</p>
       <pre><code>brew tap msitarzewski/brew-browser
+brew trust msitarzewski/brew-browser
 brew install --cask brew-browser</code></pre>
-      <p>Installs the same notarized <code>.dmg</code>.</p>
+      <p>Installs the same notarized <code>.dmg</code> (Apple Silicon or Intel). The <code>brew trust</code> step is a one-time requirement on Homebrew 6.0+, which won't load casks from non-official taps until you trust them.</p>
       <p>Or build it yourself from source — the cross-platform <strong>Tauri</strong> build:</p>
       <pre><code>git clone https://github.com/msitarzewski/brew-browser
 cd brew-browser

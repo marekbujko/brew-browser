@@ -91,10 +91,11 @@ Both macOS builds ship on the **[latest release](https://github.com/msitarzewski
 
 ```sh
 brew tap msitarzewski/brew-browser
+brew trust msitarzewski/brew-browser   # Homebrew 6.x requires trusting non-official taps
 brew install --cask brew-browser
 ```
 
-Installs the same notarized `.dmg`; update later with `brew upgrade --cask brew-browser`.
+Installs the same notarized `.dmg` (Apple Silicon **or** Intel); update later with `brew upgrade --cask brew-browser`. The `brew trust` line is required on Homebrew 6.0+, which refuses to load casks from non-official taps until you trust them — a one-time step.
 
 ### Tauri build — Linux (newly supported)
 
