@@ -542,6 +542,15 @@ struct BrewService: Sendable {
         }
         return items
     }
+
+    /// Dry-run `brew cleanup -n --prune=all` and parse the "would free
+    /// approximately X" estimate. Best-effort: nil on any error or unparsable
+    /// output — only feeds the cleanup-button hint (#80). Mirrors the Tauri
+    /// `brew_cleanup_preview` command.
+    func cleanupReclaimableBytes() async -> Int64? {
+        guard let raw = try? await runCapture(["cleanup", "-n", "--prune=all"]) else { return nil }
+        return BrewErrorPatterns.parseReclaimableBytes(raw)
+    }
 }
 
 /// One row in the Storage breakdown.

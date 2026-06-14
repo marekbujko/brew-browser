@@ -804,6 +804,14 @@ public final class AppModel {
     var outdatedLoading = false
     var storageLoading = false
 
+    // Issue #80 — cache maintenance (brew doctor / cleanup) on the Storage card.
+    /// Best-effort estimate of what `brew cleanup --prune=all` would free; nil
+    /// hides the hint. Loaded alongside the storage breakdown.
+    var cleanupReclaimableBytes: Int64?
+    var doctorRunning = false
+    var cleanupRunning = false
+    var maintenanceBusy: Bool { doctorRunning || cleanupRunning }
+
     // ---- Services panel ----
     var services: [Service] = []
     var servicesLoading = false
@@ -1284,6 +1292,35 @@ public final class AppModel {
         storageLoading = true
         storage = await brew.storageBreakdown()
         storageLoading = false
+        // Best-effort cleanup estimate for the maintenance hint (#80). Detached
+        // so it never delays the storage breakdown; a nil result hides the hint.
+        Task { cleanupReclaimableBytes = await brew.cleanupReclaimableBytes() }
+    }
+
+    // MARK: - Cache maintenance (Issue #80)
+
+    /// `brew doctor` as a streaming Activity job. Read-only diagnostics; a
+    /// non-zero exit (advisories) is treated as success by `startJob` via
+    /// `BrewErrorPatterns.doctorAdvisoryExit`, so the advisory text simply shows
+    /// in the Activity log. Mirrors the Tauri Storage-card "Run brew doctor".
+    func runDoctor() async {
+        guard !maintenanceBusy else { return }
+        doctorRunning = true
+        await startJob("Running brew doctor", args: ["doctor"], startedAt: Date().timeIntervalSince1970)
+        doctorRunning = false
+    }
+
+    /// `brew cleanup --prune=all --scrub [--verbose]` as a streaming Activity
+    /// job (#80). Destructive of cached downloads only — the UI confirm-gates it.
+    /// On success, re-measures the Storage card so the smaller cache is shown.
+    func runCleanup(verbose: Bool) async {
+        guard !maintenanceBusy else { return }
+        cleanupRunning = true
+        var args = ["cleanup", "--prune=all", "--scrub"]
+        if verbose { args.append("--verbose") }
+        let ok = await startJob("Cleaning up Homebrew cache", args: args, startedAt: Date().timeIntervalSince1970)
+        cleanupRunning = false
+        if ok { await loadStorage() }
     }
 
     /// Toolbar Refresh — reload whichever surface is showing.
@@ -2020,12 +2057,13 @@ public final class AppModel {
         // "Upgrade-all failed" reports. See BrewErrorPatterns.upgradeWarningsOnly.
         var ok = exit == 0
         if !ok, !canceled {
+            let command = "brew " + args.joined(separator: " ")
             let stderrText = jobs.first(where: { $0.id == jobId })?
                 .lines.filter { $0.stream == .stderr }.map(\.text).joined(separator: "\n") ?? ""
-            if BrewErrorPatterns.upgradeWarningsOnly(
-                stderr: stderrText,
-                command: "brew " + args.joined(separator: " ")
-            ) {
+            // brew doctor exits 1 on advisories — diagnostics, not a failure (#80).
+            if BrewErrorPatterns.upgradeWarningsOnly(stderr: stderrText, command: command)
+                || BrewErrorPatterns.doctorAdvisoryExit(command: command)
+            {
                 ok = true
             }
         }

@@ -151,6 +151,52 @@ enum BrewErrorPatterns {
         ]
         return nonFatal.contains(where: { stderr.contains($0) })
     }
+
+    /// True when `command` is a `brew doctor` invocation. brew doctor exits 1 on
+    /// advisories — diagnostics to read, not a job failure. The Activity layer
+    /// treats a non-zero doctor exit as effective-success so the advisory output
+    /// shows in the log instead of a "doctor failed" notice. Issue #80; mirrors
+    /// `error_patterns::doctor_advisory_exit`.
+    static func doctorAdvisoryExit(command: String) -> Bool {
+        let parts = command.split(separator: " ", omittingEmptySubsequences: true)
+        return parts.count >= 2 && parts[0] == "brew" && parts[1] == "doctor"
+    }
+
+    /// Parse the byte estimate out of `brew cleanup -n --prune=all` output. brew
+    /// prints `==> This operation would free approximately 1.2GB of disk space.`
+    /// Returns nil when no figure is present (nothing to clean / unparsable).
+    /// Issue #80; mirrors `disk_usage::parse_reclaimable`.
+    static func parseReclaimableBytes(_ output: String) -> Int64? {
+        let marker = "would free approximately"
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let range = line.range(of: marker) else { continue }
+            let after = line[range.upperBound...]
+            guard let token = after.split(separator: " ", omittingEmptySubsequences: true).first else { continue }
+            if let bytes = parseSizeToken(String(token)) { return bytes }
+        }
+        return nil
+    }
+
+    /// Parse a Homebrew size token (`1.2GB`, `500MB`, `1.5KB`, `900B`) into
+    /// bytes. brew's readable sizes are 1024-based despite KB/MB/GB labels.
+    /// nil on any shape we don't recognize. Mirrors `disk_usage::parse_size_token`.
+    static func parseSizeToken(_ raw: String) -> Int64? {
+        let token = raw.trimmingCharacters(in: CharacterSet(charactersIn: ".,").union(.whitespaces))
+        guard let splitIdx = token.firstIndex(where: { $0.isLetter }) else { return nil }
+        let numPart = String(token[token.startIndex..<splitIdx])
+        let unit = token[splitIdx...].uppercased()
+        guard let value = Double(numPart), value >= 0 else { return nil }
+        let mult: Double
+        switch unit {
+        case "B": mult = 1
+        case "KB", "K", "KIB": mult = 1024
+        case "MB", "M", "MIB": mult = 1024 * 1024
+        case "GB", "G", "GIB": mult = 1024 * 1024 * 1024
+        case "TB", "T", "TIB": mult = 1024 * 1024 * 1024 * 1024
+        default: return nil
+        }
+        return Int64(value * mult)
+    }
 }
 
 /// Best-effort progress tracker over brew's stdout `==>` markers. Stateful:

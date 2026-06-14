@@ -219,3 +219,50 @@ struct ClassifierFuzzTests {
         }
     }
 }
+
+// MARK: - Issue #80: doctor advisory exit + cleanup reclaimable parsing
+// Parity with disk_usage.rs / error_patterns.rs tests (same fixtures).
+
+@Suite("Issue #80 — doctor / cleanup parsing")
+struct DoctorCleanupParsingTests {
+    @Test func doctorAdvisoryExitMatchesBrewDoctor() {
+        #expect(BrewErrorPatterns.doctorAdvisoryExit(command: "brew doctor"))
+    }
+
+    @Test func doctorAdvisoryExitRejectsOthers() {
+        #expect(!BrewErrorPatterns.doctorAdvisoryExit(command: "brew upgrade"))
+        #expect(!BrewErrorPatterns.doctorAdvisoryExit(command: "brew cleanup --prune=all --scrub"))
+        #expect(!BrewErrorPatterns.doctorAdvisoryExit(command: "brew install doctor"))
+        #expect(!BrewErrorPatterns.doctorAdvisoryExit(command: ""))
+        #expect(!BrewErrorPatterns.doctorAdvisoryExit(command: "doctor"))
+    }
+
+    @Test func parseSizeTokenUnits() {
+        #expect(BrewErrorPatterns.parseSizeToken("900B") == Int64(900))
+        #expect(BrewErrorPatterns.parseSizeToken("1KB") == Int64(1024))
+        #expect(BrewErrorPatterns.parseSizeToken("1.5KB") == Int64(1536))
+        #expect(BrewErrorPatterns.parseSizeToken("500MB") == Int64(500 * 1024 * 1024))
+        #expect(BrewErrorPatterns.parseSizeToken("2GB.") == Int64(2) * 1024 * 1024 * 1024)
+    }
+
+    @Test func parseSizeTokenRejectsGarbage() {
+        #expect(BrewErrorPatterns.parseSizeToken("") == nil)
+        #expect(BrewErrorPatterns.parseSizeToken("GB") == nil)
+        #expect(BrewErrorPatterns.parseSizeToken("12") == nil)
+        #expect(BrewErrorPatterns.parseSizeToken("1.2ZB") == nil)
+        #expect(BrewErrorPatterns.parseSizeToken("-5GB") == nil)
+    }
+
+    @Test func parseReclaimableFromRealLine() {
+        let out = """
+        Would remove: ~/Library/Caches/Homebrew/foo (1.2GB)
+        ==> This operation would free approximately 2.5GB of disk space.
+        """
+        #expect(BrewErrorPatterns.parseReclaimableBytes(out) == Int64(2.5 * 1024 * 1024 * 1024))
+    }
+
+    @Test func parseReclaimableNoneWhenNothing() {
+        #expect(BrewErrorPatterns.parseReclaimableBytes("Nothing to clean up.") == nil)
+        #expect(BrewErrorPatterns.parseReclaimableBytes("") == nil)
+    }
+}

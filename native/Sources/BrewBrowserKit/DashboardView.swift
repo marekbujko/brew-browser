@@ -502,6 +502,10 @@ struct CategoriesCard: View {
 struct StorageCard: View {
     @Bindable var model: AppModel
 
+    // Issue #80 — cache cleanup confirm gate + verbose preference (local UI state).
+    @State private var showCleanupConfirm = false
+    @State private var cleanupVerbose = true
+
     private func human(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_073_741_824
         if gb >= 1 { return String(format: "%.2f GB", gb) }
@@ -546,9 +550,71 @@ struct StorageCard: View {
                     .padding(.vertical, 7)
                     if item.id != model.storage.last?.id { Divider() }
                 }
+
+                // Issue #80 — cache maintenance: brew doctor (diagnostics) +
+                // cleanup (reclaim cached downloads), both streamed into Activity.
+                Divider().padding(.vertical, 4)
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await model.runDoctor() }
+                    } label: {
+                        Label(model.doctorRunning ? "Running…" : "Run brew doctor",
+                              systemImage: "stethoscope")
+                    }
+                    .disabled(model.maintenanceBusy)
+
+                    Button {
+                        showCleanupConfirm.toggle()
+                    } label: {
+                        Label(model.cleanupRunning ? "Cleaning…" : "Clean up cache…",
+                              systemImage: "trash")
+                    }
+                    .disabled(model.maintenanceBusy)
+
+                    if let bytes = model.cleanupReclaimableBytes, bytes > 0 {
+                        Text("frees ~\(human(bytes))")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.top, 2)
+
+                if showCleanupConfirm {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(cleanupConfirmText)
+                            .font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Toggle("Verbose — list every file removed", isOn: $cleanupVerbose)
+                            .font(.callout)
+                        HStack {
+                            Spacer()
+                            Button("Cancel") { showCleanupConfirm = false }
+                            Button("Clean up", role: .destructive) {
+                                showCleanupConfirm = false
+                                Task { await model.runCleanup(verbose: cleanupVerbose) }
+                            }
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.top, 6)
+                }
             }
             .padding(.top, 2)
         }
+    }
+
+    /// Plain-English description of what cleanup removes, with the reclaimable
+    /// figure when known. Mirrors the Tauri confirm copy.
+    private var cleanupConfirmText: String {
+        let freeing: String
+        if let bytes = model.cleanupReclaimableBytes, bytes > 0 {
+            freeing = ", freeing about \(human(bytes))"
+        } else {
+            freeing = ""
+        }
+        return "Removes cached downloads\(freeing) — including the current versions "
+            + "(--scrub). Your installed packages are not affected."
     }
 }
 
