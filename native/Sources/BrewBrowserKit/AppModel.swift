@@ -1310,13 +1310,16 @@ public final class AppModel {
         doctorRunning = false
     }
 
-    /// `brew cleanup --prune=all --scrub [--verbose]` as a streaming Activity
+    /// `brew cleanup --prune=all [--scrub] [--verbose]` as a streaming Activity
     /// job (#80). Destructive of cached downloads only — the UI confirm-gates it.
-    /// On success, re-measures the Storage card so the smaller cache is shown.
-    func runCleanup(verbose: Bool) async {
+    /// `scrub` is opt-in (default off in the UI): it also removes the latest
+    /// versions' downloads, so it's a deliberate toggle. On success, re-measures
+    /// the Storage card so the smaller cache is shown.
+    func runCleanup(scrub: Bool, verbose: Bool) async {
         guard !maintenanceBusy else { return }
         cleanupRunning = true
-        var args = ["cleanup", "--prune=all", "--scrub"]
+        var args = ["cleanup", "--prune=all"]
+        if scrub { args.append("--scrub") }
         if verbose { args.append("--verbose") }
         let ok = await startJob("Cleaning up Homebrew cache", args: args, startedAt: Date().timeIntervalSince1970)
         cleanupRunning = false

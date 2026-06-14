@@ -50,6 +50,7 @@
   let cleanupRunning = $state(false);
   let cleanupConfirmOpen = $state(false);
   let cleanupVerbose = $state(true); // reporter likes seeing every file removed
+  let cleanupScrub = $state(false);  // opt-in: also remove latest-version downloads
   let maintBusy = $derived(doctorRunning || cleanupRunning);
 
   async function loadDisk(force = false) {
@@ -113,8 +114,8 @@
     try {
       const ok = await streamJob(
         "Cleaning up Homebrew cache",
-        "brew cleanup --prune=all --scrub",
-        (onEvent) => brewCleanup(cleanupVerbose, onEvent),
+        `brew cleanup --prune=all${cleanupScrub ? " --scrub" : ""}${cleanupVerbose ? " --verbose" : ""}`,
+        (onEvent) => brewCleanup(cleanupScrub, cleanupVerbose, onEvent),
       );
       if (ok) {
         // Cache shrank — re-measure the Storage card + refresh the estimate.
@@ -1001,7 +1002,7 @@
               variant="ghost"
               onclick={() => (cleanupConfirmOpen = !cleanupConfirmOpen)}
               disabled={maintBusy}
-              title="Reclaim cached downloads (brew cleanup --prune=all --scrub)"
+              title="Reclaim cached downloads (brew cleanup --prune=all)"
             >
               {#snippet icon()}<Trash2 size={14} />{/snippet}
               {cleanupRunning ? "Cleaning…" : "Clean up cache…"}
@@ -1014,10 +1015,15 @@
           {#if cleanupConfirmOpen}
             <div class="maint-confirm" role="group" aria-label="Confirm cache cleanup">
               <p>
-                Removes cached downloads{#if cleanupPreview?.reclaimableBytes}, freeing about
-                <strong>{fmtBytes(cleanupPreview.reclaimableBytes)}</strong>{/if} — including the
-                current versions (<code>--scrub</code>). Your installed packages are not affected.
+                Removes outdated cached downloads{#if cleanupPreview?.reclaimableBytes}, freeing about
+                <strong>{fmtBytes(cleanupPreview.reclaimableBytes)}</strong>{/if}.{#if cleanupScrub}
+                Also clears the <strong>current</strong> versions' downloads (<code>--scrub</code>).{/if}
+                Your installed packages are not affected.
               </p>
+              <label class="maint-verbose">
+                <input type="checkbox" bind:checked={cleanupScrub} />
+                Scrub — also remove the latest versions' cached downloads (more aggressive)
+              </label>
               <label class="maint-verbose">
                 <input type="checkbox" bind:checked={cleanupVerbose} />
                 Verbose — list every file removed

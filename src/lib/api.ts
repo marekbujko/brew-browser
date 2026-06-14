@@ -233,13 +233,16 @@ export function brewDoctorStream(
   });
 }
 
-/** Issue #80 — stream `brew cleanup --prune=all --scrub [--verbose]`. The
- *  caller MUST confirm first (destructive of cached downloads). */
+/** Issue #80 — stream `brew cleanup --prune=all [--scrub] [--verbose]`. The
+ *  caller MUST confirm first (destructive of cached downloads). `scrub` is
+ *  opt-in (default off) — it also removes the latest versions' downloads. */
 export function brewCleanup(
+  scrub: boolean,
   verbose: boolean,
   onEvent: (evt: BrewStreamEvent) => void,
 ): Promise<JobResult> {
   return invoke<JobResult>("brew_cleanup", {
+    scrub,
     verbose,
     onEvent: makeChannel(onEvent),
   });

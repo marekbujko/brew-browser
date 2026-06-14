@@ -502,9 +502,10 @@ struct CategoriesCard: View {
 struct StorageCard: View {
     @Bindable var model: AppModel
 
-    // Issue #80 — cache cleanup confirm gate + verbose preference (local UI state).
+    // Issue #80 — cache cleanup confirm gate + toggles (local UI state).
     @State private var showCleanupConfirm = false
     @State private var cleanupVerbose = true
+    @State private var cleanupScrub = false  // opt-in: also remove latest-version downloads
 
     private func human(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_073_741_824
@@ -584,6 +585,8 @@ struct StorageCard: View {
                         Text(cleanupConfirmText)
                             .font(.callout).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Toggle("Scrub — also remove the latest versions' cached downloads (more aggressive)", isOn: $cleanupScrub)
+                            .font(.callout)
                         Toggle("Verbose — list every file removed", isOn: $cleanupVerbose)
                             .font(.callout)
                         HStack {
@@ -591,7 +594,7 @@ struct StorageCard: View {
                             Button("Cancel") { showCleanupConfirm = false }
                             Button("Clean up", role: .destructive) {
                                 showCleanupConfirm = false
-                                Task { await model.runCleanup(verbose: cleanupVerbose) }
+                                Task { await model.runCleanup(scrub: cleanupScrub, verbose: cleanupVerbose) }
                             }
                         }
                     }
@@ -613,8 +616,11 @@ struct StorageCard: View {
         } else {
             freeing = ""
         }
-        return "Removes cached downloads\(freeing) — including the current versions "
-            + "(--scrub). Your installed packages are not affected."
+        let scrubNote = cleanupScrub
+            ? " Also clears the current versions' downloads (--scrub)."
+            : ""
+        return "Removes outdated cached downloads\(freeing).\(scrubNote) "
+            + "Your installed packages are not affected."
     }
 }
 

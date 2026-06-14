@@ -207,30 +207,32 @@ pub async fn brew_doctor_stream(
     run_brew_streaming(&path, args, display, on_event, jobs).await
 }
 
-/// `brew cleanup --prune=all --scrub [--verbose]` — reclaim cache space (issue
-/// #80). Destructive of CACHED DOWNLOADS only (incl. current versions, via
-/// `--scrub`); installed packages are untouched. The UI confirm-gates this with
-/// the reclaimable estimate (see `brew_cleanup_preview`). `verbose` mirrors the
-/// reporter's preference to see every file removed. On success the disk-usage
-/// cache is dropped so the Storage card re-measures the now-smaller cache.
+/// `brew cleanup --prune=all [--scrub] [--verbose]` — reclaim cache space (issue
+/// #80). Destructive of CACHED DOWNLOADS only; installed packages are untouched.
+/// `scrub` (opt-in, default off in the UI) also removes the LATEST versions'
+/// downloads — more aggressive, so it's a deliberate toggle rather than the
+/// default. `verbose` lists every file removed. The UI confirm-gates this with
+/// the reclaimable estimate (see `brew_cleanup_preview`). On success the
+/// disk-usage cache is dropped so the Storage card re-measures.
 #[tauri::command]
 pub async fn brew_cleanup(
+    scrub: bool,
     verbose: bool,
     on_event: Channel<BrewStreamEvent>,
     state: State<'_, AppState>,
 ) -> Result<JobResult, BrewError> {
     let path = state.require_brew_path().await?;
 
-    let mut args = vec![
-        "cleanup".to_string(),
-        "--prune=all".to_string(),
-        "--scrub".to_string(),
-    ];
+    let mut args = vec!["cleanup".to_string(), "--prune=all".to_string()];
+    if scrub {
+        args.push("--scrub".to_string());
+    }
     if verbose {
         args.push("--verbose".to_string());
     }
     let display = format!(
-        "brew cleanup --prune=all --scrub{}",
+        "brew cleanup --prune=all{}{}",
+        if scrub { " --scrub" } else { "" },
         if verbose { " --verbose" } else { "" }
     );
     let jobs = state.jobs.clone();
