@@ -179,7 +179,9 @@
   function failedFooter(job: typeof activeJob): string {
     if (!job) return "Failed.";
     const base = `Failed${job.durationMs ? ` after ${formatElapsed(job.durationMs)}` : ""}.`;
-    return job.friendlyMessage ? `${base} See notice at right.` : `${base} Output above.`;
+    // The failure card on the right always renders a notice now (friendly
+    // message, Homebrew-error guidance, or app-error report), so always point there.
+    return `${base} See the notice at right.`;
   }
 
   function failureTitle(label: string): string {
@@ -285,8 +287,23 @@
               <AlertTriangle size={16} />
               <h3>{failureTitle(activeJob.label)}</h3>
             </div>
-            <p>{activeJob.friendlyMessage ?? "See the Activity output for details."}</p>
-            {#if !activeJob.friendlyMessage}
+            {#if activeJob.friendlyMessage}
+              <!-- A known brew failure with a curated friendly message. -->
+              <p>{activeJob.friendlyMessage}</p>
+            {:else if activeJob.exitCode != null}
+              <!-- brew ran and exited non-zero: a Homebrew/formula problem, NOT a
+                   brew-browser bug. Don't invite a report — point at Terminal so the
+                   real (upstream) failure is taken to the right place. -->
+              <p>
+                This looks like a <strong>Homebrew</strong> error, not a brew-browser bug —
+                the command ran but exited with status {activeJob.exitCode}. Try the same
+                command in Terminal; if it fails there too, it's a Homebrew or formula issue
+                to report upstream.
+              </p>
+            {:else}
+              <!-- No exit code = brew-browser couldn't run the command (IPC/spawn
+                   failure). That IS our bug, so this is the only case that offers a report. -->
+              <p>brew-browser hit an unexpected error running this command.</p>
               <button
                 type="button"
                 class="report-btn"
