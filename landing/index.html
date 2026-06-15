@@ -18,8 +18,14 @@
   <meta name="keywords" content="homebrew, brew, macOS, GUI, package manager, Tauri, Svelte, Rust, Swift, SwiftUI, native, MIT, open source, desktop app">
 
   <!-- Favicons & app icons -->
+  <!-- /favicon.ico is what crawlers (incl. Google's s2/favicons service, which
+       brew-browser's own cask-icon resolver uses) look for first — without it
+       our mark resolved to a generic globe. Raster set + the SVG for modern UAs. -->
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
   <link rel="icon" type="image/svg+xml" href="/brew-browser.svg">
-  <link rel="apple-touch-icon" sizes="180x180" href="/brew-browser.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="mask-icon" href="/brew-browser.svg" color="#7dc855">
   <meta name="apple-mobile-web-app-title" content="brew-browser">
   <meta name="application-name" content="brew-browser">
